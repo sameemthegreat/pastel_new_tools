@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
-import { ArrowUpRight, Palette, ShieldCheck } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { AlertCircle, ArrowUpRight, Palette, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
-import { Switch } from "@/components/ui/Switch";
+import { ApiError } from "@/lib/api/client";
+import { requestPasswordReset } from "@/lib/api/auth";
 import { useAuthStore } from "@/stores/authStore";
 
 const STATS: { label: string; value: string; delta: string; wide?: boolean }[] = [
@@ -15,22 +16,53 @@ const STATS: { label: string; value: string; delta: string; wide?: boolean }[] =
   { label: "GMV this month", value: "$184,230", delta: "+8.7% vs July 2026", wide: true },
 ];
 
+const GENERIC_ERROR = "Something went wrong while signing you in. Try again.";
+
 export default function LoginPage() {
   const router = useRouter();
+  const status = useAuthStore((s) => s.status);
   const signIn = useAuthStore((s) => s.signIn);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  // Already signed in (e.g. navigated back here) — straight to the console.
+  useEffect(() => {
+    if (status === "authenticated") {
+      router.replace("/dashboard");
+    }
+  }, [status, router]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (loading) return;
+    setError(null);
+    setNotice(null);
     setLoading(true);
-    window.setTimeout(() => {
-      signIn(email.trim() || "admin@pastel.app");
+    try {
+      await signIn(email.trim(), password);
       router.push("/dashboard");
-    }, 650);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : GENERIC_ERROR);
+      setLoading(false);
+    }
+  }
+
+  async function handleForgotPassword() {
+    const target = email.trim();
+    setError(null);
+    if (!target) {
+      setNotice("Enter your email above first, then tap “Forgot password?” again.");
+      return;
+    }
+    try {
+      await requestPasswordReset(target);
+    } catch {
+      // Same neutral confirmation either way — this flow never confirms whether an account exists.
+    }
+    setNotice(`If an account exists for ${target}, a reset link is on its way.`);
   }
 
   return (
@@ -61,6 +93,23 @@ export default function LoginPage() {
             </p>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+              {error && (
+                <p
+                  role="alert"
+                  className="flex items-start gap-2 rounded-xl border border-danger/25 bg-danger/10 px-3.5 py-2.5 text-sm font-medium text-danger"
+                >
+                  <AlertCircle size={16} aria-hidden className="mt-0.5 shrink-0" />
+                  {error}
+                </p>
+              )}
+              {notice && (
+                <p
+                  role="status"
+                  className="rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-sm text-brand-700"
+                >
+                  {notice}
+                </p>
+              )}
               <Input
                 label="Email"
                 type="email"
@@ -79,10 +128,10 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
-              <div className="flex items-center justify-between">
-                <Switch checked={remember} onChange={setRemember} label="Remember me" />
+              <div className="flex items-center justify-end">
                 <button
                   type="button"
+                  onClick={handleForgotPassword}
                   className="text-sm font-medium text-brand-600 transition-colors hover:text-brand-700"
                 >
                   Forgot password?
@@ -94,7 +143,7 @@ export default function LoginPage() {
             </form>
 
             <p className="mt-6 text-center text-xs text-ink-muted">
-              Demo environment — any credentials will work.
+              Operator access only — accounts without an active admin membership cannot sign in.
             </p>
           </Card>
           <p className="mt-6 text-center text-xs text-ink-muted">

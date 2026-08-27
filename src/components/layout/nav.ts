@@ -22,7 +22,7 @@ export type NavItem = {
   icon: LucideIcon;
   /** Static badge count shown as a pill next to the label. */
   badge?: number;
-  /** Only visible to users with role "admin". */
+  /** Only visible to operators with the "superAdmin" admin role. */
   adminOnly?: boolean;
 };
 

@@ -7,6 +7,7 @@ import { NAV_GROUPS, type NavItem } from "@/components/layout/nav";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/cn";
 import { useAuthStore } from "@/stores/authStore";
+import { ADMIN_ROLE_LABELS } from "@/types/auth";
 import { useUIStore } from "@/stores/uiStore";
 
 function NavLink({
@@ -77,7 +78,7 @@ function SidebarContent({
 
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !item.adminOnly || user?.role === "admin"),
+    items: group.items.filter((item) => !item.adminOnly || user?.role === "superAdmin"),
   })).filter((group) => group.items.length > 0);
 
   return (
@@ -170,8 +171,8 @@ function SidebarContent({
               <span className="block truncate text-sm font-medium text-ink">
                 {user?.name ?? "Signed out"}
               </span>
-              <span className="block truncate text-xs capitalize text-ink-muted">
-                {user?.role ?? "guest"}
+              <span className="block truncate text-xs text-ink-muted">
+                {user ? ADMIN_ROLE_LABELS[user.role] : "Signed out"}
               </span>
             </span>
           )}
