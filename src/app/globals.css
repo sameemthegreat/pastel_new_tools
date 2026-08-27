@@ -1,26 +1,92 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@theme {
+  /* ── Pastel brand (canonical terracotta — see marketplace BRAND_GUIDELINES) ── */
+  --color-brand-50: #fdeee4;
+  --color-brand-100: #fbdecc;
+  --color-brand-200: #f6bd9b;
+  --color-brand-300: #f0955f;
+  --color-brand-400: #ea6f2b;
+  --color-brand-500: #e3560a;
+  --color-brand-600: #c94d09;
+  --color-brand-700: #b04408;
+  --color-brand-800: #8a3506;
+  --color-brand-900: #5f2404;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* ── Warm neutrals (Pastel 2026 revamp palette) ── */
+  --color-cream: #f7f1e6;
+  --color-surface: #ffffff;
+  --color-tile: #f2f2f2;
+  --color-ink: #1a1a1a;
+  --color-ink-secondary: #6f6656;
+  --color-ink-muted: #9c9179;
+  --color-hairline: #ece8e1;
+  --color-tileborder: #e6dcc9;
+  --color-nav-inactive: #a79887;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* ── Accents ── */
+  --color-forest: #065a3f;
+  --color-forest-light: #e8f2ee;
+  --color-price: #2e5a39;
+  --color-star: #e9a23b;
+  --color-gold: #b8963e;
+  --color-gold-light: #d4b76a;
+  --color-danger: #d62d20;
+  --color-badge: #f15a24;
+
+  /* ── Semantic scales (Untitled UI, from marketplace tailwind config) ── */
+  --color-success-50: #ecfdf3;
+  --color-success-100: #d1fadf;
+  --color-success-500: #17b26a;
+  --color-success-600: #039855;
+  --color-success-700: #027a48;
+  --color-warning-50: #fffaeb;
+  --color-warning-100: #fef0c7;
+  --color-warning-500: #f79009;
+  --color-warning-600: #dc6803;
+  --color-warning-700: #b54708;
+  --color-error-50: #fef3f2;
+  --color-error-100: #fee4e2;
+  --color-error-500: #f04438;
+  --color-error-600: #d92d20;
+  --color-error-700: #b42318;
+
+  /* ── Typography ── */
+  --font-sans: var(--font-dm-sans), system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+
+  /* ── Elevation (marketplace shadow scale) ── */
+  --shadow-xs: 0px 1px 2px 0px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0px 1px 2px 0px rgba(16, 24, 40, 0.06),
+    0px 1px 3px 0px rgba(16, 24, 40, 0.1);
+  --shadow-md: 0px 2px 4px -2px rgba(16, 24, 40, 0.06),
+    0px 4px 8px -2px rgba(16, 24, 40, 0.1);
+  --shadow-lg: 0px 4px 6px -2px rgba(16, 24, 40, 0.03),
+    0px 12px 16px -4px rgba(16, 24, 40, 0.08);
+  --shadow-xl: 0px 8px 8px -4px rgba(16, 24, 40, 0.03),
+    0px 20px 24px -4px rgba(16, 24, 40, 0.08);
+  --shadow-2xl: 0px 24px 48px -12px rgba(16, 24, 40, 0.18);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin warm scrollbars for panel scroll areas */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-tileborder) transparent;
+}
+
+/* Keyboard-driven focus ring, brand-tinted */
+:where(button, a, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-brand-500) 45%, transparent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-brand-100);
 }
