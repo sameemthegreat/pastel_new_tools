@@ -12,11 +12,11 @@ import type {
  */
 
 /**
- * POST /admin/auth/login — operator sign-in.
+ * POST /auth/login — operator sign-in.
  * 401: wrong email/password · 403: banned account or no active AdminMembership · 429: throttled.
  */
 export function loginToAdminConsole(email: string, password: string): Promise<AdminSession> {
-  return apiFetch<AdminSession>("/admin/auth/login", {
+  return apiFetch<AdminSession>("/auth/login", {
     method: "POST",
     body: { email, password },
   });

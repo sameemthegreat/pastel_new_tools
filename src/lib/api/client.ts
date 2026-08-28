@@ -5,9 +5,10 @@
  *   success — { status: true,  message, data:   { value, meta } }
  *   failure — { status: false, message, errors: { value: [{ field, message }], meta } }
  *
- * `apiFetch` unwraps `data.value` on success and throws `ApiError` on anything else, so callers
- * deal in payloads and typed errors only. Requests carry `credentials: "include"` because the
- * backend keeps the refresh token in the httpOnly `pa_rt` cookie (path `/api/v1/auth`).
+ * Two transports share the core:
+ *   - `apiFetch` — direct to the backend (auth endpoints; carries the refresh cookie).
+ *   - `adminFetch` / `adminFetchPage` (in `admin.ts`) — same-origin through the `/api/admin/*`
+ *     proxy that attaches the operator secret server-side.
  */
 
 const API_BASE_URL = (
@@ -44,23 +45,28 @@ type ErrorEnvelope = {
   errors?: { value?: FieldError[]; meta?: Record<string, unknown> };
 };
 
-type RequestOptions = {
+export type RequestOptions = {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   /** JSON-serialized as the request body. Pass `{}` for cookie-driven POSTs like /auth/refresh. */
   body?: unknown;
   /** Sent as `Authorization: Bearer <token>` when the endpoint requires the `user` scope. */
   accessToken?: string;
+  /** Extra request headers, e.g. `Idempotency-Key` on money endpoints. */
+  headers?: Record<string, string>;
 };
 
-/** Calls `${API_BASE_URL}${path}` and resolves with the envelope's `data.value`. */
-export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+/** Core transport: resolves with the whole `data` block (`value` + `meta`), throws `ApiError`. */
+export async function envelopeFetch<T>(
+  url: string,
+  options: RequestOptions = {}
+): Promise<{ value: T; meta: Record<string, unknown> }> {
+  const headers: Record<string, string> = { Accept: "application/json", ...options.headers };
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (options.accessToken) headers.Authorization = `Bearer ${options.accessToken}`;
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(url, {
       method: options.method ?? "GET",
       credentials: "include",
       headers,
@@ -88,5 +94,11 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     throw new ApiError(response.status, message, fieldErrors);
   }
 
-  return envelope.data.value;
+  return envelope.data;
+}
+
+/** Calls `${API_BASE_URL}${path}` directly and resolves with the envelope's `data.value`. */
+export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { value } = await envelopeFetch<T>(`${API_BASE_URL}${path}`, options);
+  return value;
 }

@@ -22,6 +22,8 @@ export type NavItem = {
   icon: LucideIcon;
   /** Static badge count shown as a pill next to the label. */
   badge?: number;
+  /** Not built yet — rendered disabled with a "Soon" chip instead of a dead link. */
+  comingSoon?: boolean;
   /** Only visible to operators with the "superAdmin" admin role. */
   adminOnly?: boolean;
 };
@@ -48,7 +50,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Users & Requests",
     items: [
       { label: "Users", href: "/users", icon: Users },
-      { label: "Requests", href: "/requests", icon: Inbox, badge: 6 },
+      { label: "Requests", href: "/requests", icon: Inbox },
       { label: "Team", href: "/team", icon: UserPlus, adminOnly: true },
     ],
   },

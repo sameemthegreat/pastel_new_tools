@@ -1,687 +1,351 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-  KeyRound,
-  Loader2,
-  Mail,
-  MailPlus,
-  MoreHorizontal,
-  Pencil,
-  Send,
-  ShieldCheck,
-  Trash2,
-  UserPlus,
-  Users,
-} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { RefreshCw, ShieldCheck, UserPlus } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DataTable, type Column } from "@/components/ui/DataTable";
-import { Drawer } from "@/components/ui/Drawer";
-import { Dropdown } from "@/components/ui/Dropdown";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
-import { SearchInput } from "@/components/ui/SearchInput";
 import { Select } from "@/components/ui/Select";
-import { StatCard } from "@/components/ui/StatCard";
-import { Tabs } from "@/components/ui/Tabs";
-import { SELF_MEMBER_ID } from "@/data/team";
-import { formatDate, formatDateTime, formatNumber, NOW, timeAgo } from "@/lib/format";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { grantOperator, listTeam, revokeOperator, updateOperatorRole } from "@/lib/api/admin";
+import { ApiError } from "@/lib/api/client";
+import { formatDate, timeAgo } from "@/lib/format";
+import { toast } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
-import { useTeamStore } from "@/stores/teamStore";
-import type { InviteEmailType, TeamMember, TeamRole } from "@/types/team";
+import type { AccountStatus, OperatorMember } from "@/types/admin";
+import { ADMIN_ROLE_LABELS, type AdminRole } from "@/types/auth";
 
-const ROLE_OPTIONS: { value: string; label: string }[] = [
-  { value: "member", label: "Member" },
-  { value: "admin", label: "Admin" },
-];
+const ROLE_OPTIONS = (Object.keys(ADMIN_ROLE_LABELS) as AdminRole[]).map((role) => ({
+  value: role,
+  label: ADMIN_ROLE_LABELS[role],
+}));
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const USERNAME_RE = /^[a-z0-9._-]{2,24}$/i;
 
-const CURRENT_MONTH = NOW.slice(0, 7); // "2026-08"
-
-const INVITE_TYPE_META: Record<InviteEmailType, { label: string; tone: BadgeTone }> = {
-  welcome: { label: "Welcome", tone: "brand" },
-  resend: { label: "Welcome resend", tone: "gold" },
-  reset: { label: "Password reset", tone: "warning" },
+/** Account standing on the underlying marketplace account, not the grant itself. */
+const STATUS_META: Record<AccountStatus, { label: string; tone: BadgeTone }> = {
+  active: { label: "Active", tone: "success" },
+  restricted: { label: "Restricted", tone: "warning" },
+  banned: { label: "Banned", tone: "error" },
+  deleted: { label: "Deleted", tone: "error" },
 };
 
-type ConfirmKind = "reset" | "resend" | "remove";
-
-type MemberFormErrors = {
-  name?: string;
-  username?: string;
-  email?: string;
-};
+function memberName(member: OperatorMember): string {
+  return member.displayName ?? member.email;
+}
 
 export default function TeamPage() {
-  const members = useTeamStore((s) => s.members);
-  const invites = useTeamStore((s) => s.invites);
-  const addingMember = useTeamStore((s) => s.addingMember);
-  const savingMember = useTeamStore((s) => s.savingMember);
-  const sendingTest = useTeamStore((s) => s.sendingTest);
-  const busyMemberId = useTeamStore((s) => s.busyMemberId);
-  const addMember = useTeamStore((s) => s.addMember);
-  const updateMember = useTeamStore((s) => s.updateMember);
-  const setRole = useTeamStore((s) => s.setRole);
-  const removeMember = useTeamStore((s) => s.removeMember);
-  const resetPassword = useTeamStore((s) => s.resetPassword);
-  const resendWelcome = useTeamStore((s) => s.resendWelcome);
-  const sendTestEmail = useTeamStore((s) => s.sendTestEmail);
+  const user = useAuthStore((s) => s.user);
+  const isSuperAdmin = user?.role === "superAdmin";
 
-  const authUser = useAuthStore((s) => s.user);
-  const selfMember = members.find((m) => m.id === SELF_MEMBER_ID) ?? null;
-  const actorName = authUser?.name ?? selfMember?.name ?? "Admin";
-  const testEmailTarget = authUser?.email ?? selfMember?.email ?? "admin@mypastel.com";
-
-  const [tab, setTab] = useState("all");
-  const [query, setQuery] = useState("");
+  const [team, setTeam] = useState<OperatorMember[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [addForm, setAddForm] = useState({ name: "", username: "", email: "", role: "member" });
-  const [addErrors, setAddErrors] = useState<MemberFormErrors>({});
+  const [addEmail, setAddEmail] = useState("");
+  const [addRole, setAddRole] = useState<AdminRole>("opsAgent");
+  const [addError, setAddError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "" });
-  const [editErrors, setEditErrors] = useState<MemberFormErrors>({});
+  const [revoking, setRevoking] = useState<OperatorMember | null>(null);
 
-  const [confirm, setConfirm] = useState<{ kind: ConfirmKind; member: TeamMember } | null>(null);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const members = await listTeam();
+      setTeam(members);
+      setError(null);
+    } catch (err) {
+      setTeam([]);
+      setError(err instanceof ApiError ? err.message : "Could not load the team.");
+    }
+  }, []);
 
-  const editingMember = editingId ? members.find((m) => m.id === editingId) ?? null : null;
-  const detailMember = detailId ? members.find((m) => m.id === detailId) ?? null : null;
-
-  const adminCount = members.filter((m) => m.role === "admin").length;
-  const invitesThisMonth = invites.filter((i) => i.sentAt.startsWith(CURRENT_MONTH)).length;
-  const joinedThisMonth = members.filter((m) => m.joinedAt.startsWith(CURRENT_MONTH)).length;
-
-  const normalizedQuery = query.trim().toLowerCase();
-
-  const filteredMembers = useMemo(() => {
-    return members.filter((m) => {
-      if (tab === "admin" && m.role !== "admin") return false;
-      if (tab === "member" && m.role !== "member") return false;
-      if (!normalizedQuery) return true;
-      return (
-        m.name.toLowerCase().includes(normalizedQuery) ||
-        m.username.toLowerCase().includes(normalizedQuery) ||
-        m.email.toLowerCase().includes(normalizedQuery)
-      );
-    });
-  }, [members, tab, normalizedQuery]);
-
-  const activityRows = useMemo(() => {
-    const sorted = [...invites].sort((a, b) => b.sentAt.localeCompare(a.sentAt));
-    if (!normalizedQuery) return sorted;
-    return sorted.filter(
-      (i) =>
-        i.recipientName.toLowerCase().includes(normalizedQuery) ||
-        i.recipientEmail.toLowerCase().includes(normalizedQuery) ||
-        i.sentBy.toLowerCase().includes(normalizedQuery)
-    );
-  }, [invites, normalizedQuery]);
-
-  const detailInvites = useMemo(() => {
-    if (!detailMember) return [];
-    return invites
-      .filter((i) => i.memberId === detailMember.id)
-      .sort((a, b) => b.sentAt.localeCompare(a.sentAt));
-  }, [invites, detailMember]);
+  useEffect(() => {
+    // The loader only touches state after its await; awaiting it from an
+    // inline async function keeps the effect body itself free of setState.
+    const run = async () => {
+      await load();
+    };
+    void run();
+  }, [load]);
 
   function openAdd() {
-    setAddForm({ name: "", username: "", email: "", role: "member" });
-    setAddErrors({});
+    setAddEmail("");
+    setAddRole("opsAgent");
+    setAddError(null);
     setAddOpen(true);
   }
 
-  function openEdit(member: TeamMember) {
-    setEditForm({ name: member.name, email: member.email });
-    setEditErrors({});
-    setEditingId(member.id);
+  async function handleAdd() {
+    if (adding) return;
+    const email = addEmail.trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) {
+      setAddError("Enter a valid email address.");
+      return;
+    }
+    setAddError(null);
+    setAdding(true);
+    try {
+      await grantOperator(email, addRole);
+      toast({ title: "Operator added", description: email, tone: "success" });
+      setAddOpen(false);
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setAddError("No Pastel account exists for this email — they need to sign up first.");
+      } else if (err instanceof ApiError) {
+        setAddError(err.message);
+      } else {
+        setAddError("Could not add the operator.");
+      }
+    } finally {
+      setAdding(false);
+    }
   }
 
-  function validateAdd(): boolean {
-    const errors: MemberFormErrors = {};
-    if (!addForm.name.trim()) errors.name = "Name is required.";
-    const username = addForm.username.trim();
-    if (!username) {
-      errors.username = "Username is required.";
-    } else if (!USERNAME_RE.test(username)) {
-      errors.username = "2–24 characters: letters, numbers, dots, dashes.";
-    } else if (members.some((m) => m.username.toLowerCase() === username.toLowerCase())) {
-      errors.username = "That username is already taken.";
-    }
-    const email = addForm.email.trim();
-    if (!email) {
-      errors.email = "Email is required.";
-    } else if (!EMAIL_RE.test(email)) {
-      errors.email = "Enter a valid email address.";
-    } else if (members.some((m) => m.email.toLowerCase() === email.toLowerCase())) {
-      errors.email = "A member with this email already exists.";
-    }
-    setAddErrors(errors);
-    return Object.keys(errors).length === 0;
-  }
-
-  function submitAdd() {
-    if (!validateAdd()) return;
-    addMember(
-      {
-        name: addForm.name,
-        username: addForm.username,
-        email: addForm.email,
-        role: addForm.role as TeamRole,
-      },
-      actorName,
-      () => setAddOpen(false)
+  async function handleRoleChange(member: OperatorMember, role: AdminRole) {
+    if (role === member.role) return;
+    // Show the new role immediately; a failed call reloads and snaps the select back.
+    setTeam((prev) =>
+      prev ? prev.map((m) => (m.userId === member.userId ? { ...m, role } : m)) : prev
     );
-  }
-
-  function validateEdit(): boolean {
-    const errors: MemberFormErrors = {};
-    if (!editForm.name.trim()) errors.name = "Name is required.";
-    const email = editForm.email.trim();
-    if (!email) {
-      errors.email = "Email is required.";
-    } else if (!EMAIL_RE.test(email)) {
-      errors.email = "Enter a valid email address.";
-    } else if (
-      members.some((m) => m.id !== editingId && m.email.toLowerCase() === email.toLowerCase())
-    ) {
-      errors.email = "Another member already uses this email.";
+    try {
+      await updateOperatorRole(member.userId, role);
+      toast({
+        title: "Role updated",
+        description: `${memberName(member)} is now ${ADMIN_ROLE_LABELS[role]}.`,
+        tone: "success",
+      });
+      await load();
+    } catch (err) {
+      toast({
+        title: "Could not change role",
+        description: err instanceof ApiError ? err.message : memberName(member),
+        tone: "error",
+      });
+      await load();
     }
-    setEditErrors(errors);
-    return Object.keys(errors).length === 0;
   }
 
-  function submitEdit() {
-    if (!editingId || !validateEdit()) return;
-    updateMember(editingId, { name: editForm.name, email: editForm.email }, () =>
-      setEditingId(null)
-    );
-  }
-
-  function handleConfirm() {
-    if (!confirm) return;
-    const { kind, member } = confirm;
-    if (kind === "reset") resetPassword(member.id, actorName);
-    if (kind === "resend") resendWelcome(member.id, actorName);
-    if (kind === "remove") {
-      removeMember(member.id);
-      if (detailId === member.id) setDetailId(null);
+  async function handleRevoke() {
+    if (!revoking) return;
+    const target = revoking;
+    setRevoking(null);
+    try {
+      await revokeOperator(target.userId);
+      toast({ title: "Access revoked", description: memberName(target), tone: "success" });
+      await load();
+    } catch (err) {
+      toast({
+        title: "Could not revoke access",
+        description: err instanceof ApiError ? err.message : memberName(target),
+        tone: "error",
+      });
     }
-    setConfirm(null);
   }
 
-  const memberColumns: Column<TeamMember>[] = [
+  const columns: Column<OperatorMember>[] = [
     {
-      key: "member",
-      header: "Member",
-      sortValue: (m) => m.name.toLowerCase(),
+      key: "operator",
+      header: "Operator",
+      sortValue: (m) => memberName(m).toLowerCase(),
       render: (m) => (
         <div className="flex items-center gap-3">
-          <Avatar name={m.name} size="sm" />
+          <Avatar name={memberName(m)} size="sm" />
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 font-medium text-ink">
-              <span className="truncate">{m.name}</span>
-              {m.id === SELF_MEMBER_ID && <Badge tone="brand">You</Badge>}
+              <span className="truncate">{memberName(m)}</span>
+              {m.userId === user?.id && <Badge tone="brand">You</Badge>}
             </div>
-            <div className="truncate text-xs text-ink-muted">@{m.username}</div>
+            <div className="truncate text-xs text-ink-muted">{m.email}</div>
           </div>
         </div>
       ),
-    },
-    {
-      key: "email",
-      header: "Email",
-      sortValue: (m) => m.email,
-      render: (m) => <span className="text-ink-secondary">{m.email}</span>,
     },
     {
       key: "role",
       header: "Role",
-      width: "w-36",
+      width: "w-44",
       sortValue: (m) => m.role,
       render: (m) =>
-        m.id === SELF_MEMBER_ID ? (
-          <Badge tone={m.role === "admin" ? "brand" : "neutral"}>
-            {m.role === "admin" ? "Admin" : "Member"}
-          </Badge>
+        isSuperAdmin && m.userId !== user?.id ? (
+          <Select
+            value={m.role}
+            onChange={(v) => void handleRoleChange(m, v as AdminRole)}
+            options={ROLE_OPTIONS}
+            className="w-40"
+          />
         ) : (
-          <div className="w-32" onClick={(e) => e.stopPropagation()}>
-            <Select
-              value={m.role}
-              onChange={(v) => setRole(m.id, v as TeamRole)}
-              options={ROLE_OPTIONS}
-            />
-          </div>
+          <Badge tone={m.role === "superAdmin" ? "brand" : "neutral"}>
+            {ADMIN_ROLE_LABELS[m.role]}
+          </Badge>
         ),
     },
     {
-      key: "joined",
-      header: "Joined",
+      key: "accountStatus",
+      header: "Account",
       width: "w-32",
-      sortValue: (m) => m.joinedAt,
-      render: (m) => <span className="text-ink-secondary">{formatDate(m.joinedAt)}</span>,
-    },
-    {
-      key: "actions",
-      header: "",
-      align: "right",
-      width: "w-16",
+      sortValue: (m) => m.accountStatus,
       render: (m) => (
-        <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
-          {m.id === SELF_MEMBER_ID ? (
-            <span className="text-xs font-medium text-ink-muted">You</span>
-          ) : busyMemberId === m.id ? (
-            <Loader2 className="h-4 w-4 animate-spin text-brand-500" />
-          ) : (
-            <Dropdown
-              trigger={
-                <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-secondary transition-colors hover:bg-tile">
-                  <MoreHorizontal className="h-4 w-4" />
-                </span>
-              }
-              items={[
-                { label: "Edit member", icon: Pencil, onClick: () => openEdit(m) },
-                {
-                  label: "Reset password",
-                  icon: KeyRound,
-                  onClick: () => setConfirm({ kind: "reset", member: m }),
-                },
-                {
-                  label: "Resend welcome email",
-                  icon: MailPlus,
-                  onClick: () => setConfirm({ kind: "resend", member: m }),
-                },
-                {
-                  label: "Remove member",
-                  icon: Trash2,
-                  tone: "danger",
-                  separatorAbove: true,
-                  onClick: () => setConfirm({ kind: "remove", member: m }),
-                },
-              ]}
-            />
-          )}
-        </div>
+        <Badge tone={STATUS_META[m.accountStatus].tone} dot>
+          {STATUS_META[m.accountStatus].label}
+        </Badge>
       ),
     },
+    {
+      key: "grantedAt",
+      header: "Granted",
+      width: "w-36",
+      sortValue: (m) => m.grantedAt,
+      render: (m) => (
+        <span className="text-ink-secondary" title={formatDate(m.grantedAt)}>
+          {timeAgo(m.grantedAt)}
+        </span>
+      ),
+    },
+    ...(isSuperAdmin
+      ? [
+          {
+            key: "actions",
+            header: "",
+            align: "right",
+            width: "w-24",
+            render: (m) =>
+              m.userId === user?.id ? null : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-danger hover:bg-danger/10"
+                  onClick={() => setRevoking(m)}
+                >
+                  Revoke
+                </Button>
+              ),
+          } satisfies Column<OperatorMember>,
+        ]
+      : []),
   ];
-
-  const activityColumns: Column<(typeof activityRows)[number]>[] = [
-    {
-      key: "recipient",
-      header: "Recipient",
-      sortValue: (i) => i.recipientName.toLowerCase(),
-      render: (i) => (
-        <div className="flex items-center gap-3">
-          <Avatar name={i.recipientName} size="sm" />
-          <div className="min-w-0">
-            <div className="truncate font-medium text-ink">{i.recipientName}</div>
-            <div className="truncate text-xs text-ink-muted">{i.recipientEmail}</div>
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: "type",
-      header: "Email",
-      width: "w-40",
-      sortValue: (i) => i.type,
-      render: (i) => (
-        <Badge tone={INVITE_TYPE_META[i.type].tone}>{INVITE_TYPE_META[i.type].label}</Badge>
-      ),
-    },
-    {
-      key: "sentBy",
-      header: "Sent by",
-      width: "w-40",
-      sortValue: (i) => i.sentBy.toLowerCase(),
-      render: (i) => <span className="text-ink-secondary">{i.sentBy}</span>,
-    },
-    {
-      key: "sentAt",
-      header: "Sent",
-      width: "w-56",
-      sortValue: (i) => i.sentAt,
-      render: (i) => (
-        <div>
-          <div className="text-ink-secondary">{formatDateTime(i.sentAt)}</div>
-          <div className="text-xs text-ink-muted">{timeAgo(i.sentAt)}</div>
-        </div>
-      ),
-    },
-  ];
-
-  const confirmCopy: Record<ConfirmKind, { title: string; message: string; label: string; tone: "danger" | "brand" }> =
-    {
-      reset: {
-        title: "Reset password?",
-        message: confirm
-          ? `Send a password reset email to ${confirm.member.email}? Their current password keeps working until they choose a new one.`
-          : "",
-        label: "Send reset email",
-        tone: "brand",
-      },
-      resend: {
-        title: "Resend welcome email?",
-        message: confirm
-          ? `Send ${confirm.member.name} a fresh welcome email with new login details at ${confirm.member.email}?`
-          : "",
-        label: "Resend email",
-        tone: "brand",
-      },
-      remove: {
-        title: "Remove member?",
-        message: confirm
-          ? `This permanently removes ${confirm.member.name} (@${confirm.member.username}) from the team and revokes console access. This cannot be undone.`
-          : "",
-        label: "Remove member",
-        tone: "danger",
-      },
-    };
 
   return (
-    <div>
+    <>
       <PageHeader
         title="Team"
-        description="Manage console accounts, roles, and welcome emails for the Pastel admin team."
+        description="Who can sign in to the operator console. Operators use their own Pastel marketplace accounts — access is a grant on top, not a separate login."
         actions={
           <>
-            <Button
-              variant="outline"
-              icon={Mail}
-              loading={sendingTest}
-              onClick={() => sendTestEmail(testEmailTarget)}
-            >
-              Send test email
+            <Button variant="outline" onClick={() => void load()}>
+              <RefreshCw size={15} aria-hidden /> Refresh
             </Button>
-            <Button icon={UserPlus} onClick={openAdd}>
-              Add member
-            </Button>
+            {isSuperAdmin && (
+              <Button icon={UserPlus} onClick={openAdd}>
+                Add operator
+              </Button>
+            )}
           </>
         }
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Total members"
-          value={formatNumber(members.length)}
-          icon={Users}
-          hint={`${joinedThisMonth} joined in August`}
-        />
-        <StatCard
-          label="Admins"
-          value={formatNumber(adminCount)}
-          icon={ShieldCheck}
-          hint={
-            members.length > 0
-              ? `${Math.round((adminCount / members.length) * 100)}% of the team`
-              : "No members yet"
-          }
-        />
-        <StatCard
-          label="Invites sent this month"
-          value={formatNumber(invitesThisMonth)}
-          icon={Send}
-          hint="Welcome, resend & reset emails"
-        />
-      </div>
-
-      <div className="mb-4">
-        <Tabs
-          tabs={[
-            { key: "all", label: "All members", count: members.length },
-            { key: "admin", label: "Admins", count: adminCount },
-            { key: "member", label: "Members", count: members.length - adminCount },
-            { key: "activity", label: "Email activity", count: invites.length },
-          ]}
-          active={tab}
-          onChange={setTab}
-        />
-      </div>
-
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <SearchInput
-          value={query}
-          onChange={setQuery}
-          placeholder={
-            tab === "activity" ? "Search recipient, email, or sender…" : "Search name, username, or email…"
-          }
-          className="w-full sm:w-80"
-        />
-        <span className="text-sm text-ink-muted">
-          {tab === "activity"
-            ? `${formatNumber(activityRows.length)} emails logged`
-            : `${formatNumber(filteredMembers.length)} of ${formatNumber(members.length)} members`}
-        </span>
-      </div>
-
-      {tab === "activity" ? (
-        <DataTable
-          rows={activityRows}
-          columns={activityColumns}
-          rowKey={(i) => i.id}
-          pageSize={10}
-          emptyTitle="No email activity"
-          emptyDescription="Welcome, resend, and password reset emails will show up here."
-        />
-      ) : (
-        <DataTable
-          rows={filteredMembers}
-          columns={memberColumns}
-          rowKey={(m) => m.id}
-          onRowClick={(m) => setDetailId(m.id)}
-          pageSize={10}
-          emptyTitle="No members found"
-          emptyDescription="Try a different search, or add a new team member."
-        />
+      {!isSuperAdmin && (
+        <p className="mb-4 text-sm text-ink-muted">
+          You can see the team here, but adding operators, changing roles, and revoking access
+          need a super admin.
+        </p>
       )}
 
-      {/* Add member */}
+      {error && (
+        <Card className="mb-4 border-danger/25 bg-danger/5 p-4 text-sm font-medium text-danger">
+          {error}
+        </Card>
+      )}
+
+      {team === null ? (
+        <Card className="space-y-3 p-6">
+          <Skeleton className="h-6 w-1/3" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </Card>
+      ) : team.length === 0 && !error ? (
+        <Card className="p-6">
+          <EmptyState
+            icon={ShieldCheck}
+            title="No operators yet"
+            description="Grant console access to an existing Pastel account and they can sign in with their own credentials."
+            action={
+              isSuperAdmin ? <Button onClick={openAdd}>Add operator</Button> : undefined
+            }
+          />
+        </Card>
+      ) : (
+        <Card className="p-0">
+          <DataTable
+            rows={team}
+            columns={columns}
+            rowKey={(m) => m.userId}
+            pageSize={15}
+            emptyTitle="No operators"
+          />
+        </Card>
+      )}
+
       <Modal
         open={addOpen}
-        onClose={() => !addingMember && setAddOpen(false)}
-        title="Add team member"
-        description="They'll receive a welcome email with their login details."
+        onClose={() => !adding && setAddOpen(false)}
+        title="Add operator"
+        description="Grants console access to an existing Pastel account — they sign in with their own marketplace credentials."
         footer={
           <>
-            <Button variant="ghost" onClick={() => setAddOpen(false)} disabled={addingMember}>
+            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={adding}>
               Cancel
             </Button>
-            <Button loading={addingMember} icon={Send} onClick={submitAdd}>
-              Add &amp; send welcome email
+            <Button loading={adding} icon={UserPlus} onClick={() => void handleAdd()}>
+              Grant access
             </Button>
           </>
         }
       >
         <div className="space-y-4">
-          <Input
-            label="Full name"
-            placeholder="e.g. Nadia Rahman"
-            value={addForm.name}
-            error={addErrors.name}
-            onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
-          />
-          <Input
-            label="Username"
-            placeholder="e.g. nadiar"
-            value={addForm.username}
-            error={addErrors.username}
-            hint="Used for @mentions and attribution across the console."
-            onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value }))}
-          />
+          {addError && (
+            <p
+              role="alert"
+              className="rounded-xl border border-danger/25 bg-danger/10 px-3.5 py-2.5 text-sm font-medium text-danger"
+            >
+              {addError}
+            </p>
+          )}
           <Input
             label="Email"
             type="email"
-            placeholder="name@mypastel.com"
-            value={addForm.email}
-            error={addErrors.email}
-            hint="Login details will be sent here."
-            onChange={(e) => setAddForm((f) => ({ ...f, email: e.target.value }))}
+            required
+            placeholder="name@example.com"
+            hint="Must match an existing Pastel account — there's nothing to invite; if they haven't signed up yet, that comes first."
+            value={addEmail}
+            onChange={(e) => setAddEmail(e.target.value)}
           />
           <Select
             label="Role"
-            value={addForm.role}
-            onChange={(v) => setAddForm((f) => ({ ...f, role: v }))}
+            value={addRole}
+            onChange={(v) => setAddRole(v as AdminRole)}
             options={ROLE_OPTIONS}
           />
         </div>
       </Modal>
 
-      {/* Edit member */}
-      <Modal
-        open={!!editingMember}
-        onClose={() => !savingMember && setEditingId(null)}
-        title={editingMember ? `Edit ${editingMember.name}` : "Edit member"}
-        description={editingMember ? `@${editingMember.username}` : undefined}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setEditingId(null)} disabled={savingMember}>
-              Cancel
-            </Button>
-            <Button loading={savingMember} onClick={submitEdit}>
-              Save changes
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <Input
-            label="Full name"
-            value={editForm.name}
-            error={editErrors.name}
-            onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-          />
-          <Input
-            label="Email"
-            type="email"
-            value={editForm.email}
-            error={editErrors.email}
-            onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
-          />
-        </div>
-      </Modal>
-
-      {/* Confirmations */}
       <ConfirmDialog
-        open={!!confirm}
-        onClose={() => setConfirm(null)}
-        onConfirm={handleConfirm}
-        title={confirm ? confirmCopy[confirm.kind].title : ""}
-        message={confirm ? confirmCopy[confirm.kind].message : ""}
-        confirmLabel={confirm ? confirmCopy[confirm.kind].label : "Confirm"}
-        tone={confirm ? confirmCopy[confirm.kind].tone : "danger"}
+        open={revoking !== null}
+        onClose={() => setRevoking(null)}
+        onConfirm={() => void handleRevoke()}
+        title="Revoke console access"
+        message={`${revoking ? memberName(revoking) : ""} loses console access on their next session refresh; the grant history is kept.`}
+        confirmLabel="Revoke access"
       />
-
-      {/* Member detail */}
-      <Drawer
-        open={!!detailMember}
-        onClose={() => setDetailId(null)}
-        title={detailMember?.name ?? "Member"}
-        description={detailMember ? `@${detailMember.username}` : undefined}
-        footer={
-          detailMember && detailMember.id !== SELF_MEMBER_ID ? (
-            <>
-              <Button
-                variant="outline"
-                icon={Pencil}
-                onClick={() => {
-                  setDetailId(null);
-                  openEdit(detailMember);
-                }}
-              >
-                Edit
-              </Button>
-              <Button
-                variant="danger"
-                icon={Trash2}
-                onClick={() => setConfirm({ kind: "remove", member: detailMember })}
-              >
-                Remove
-              </Button>
-            </>
-          ) : undefined
-        }
-      >
-        {detailMember && (
-          <div className="space-y-6">
-            <div className="flex items-center gap-4">
-              <Avatar name={detailMember.name} size="lg" />
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-base font-semibold text-ink">{detailMember.name}</span>
-                  {detailMember.id === SELF_MEMBER_ID && <Badge tone="brand">You</Badge>}
-                </div>
-                <div className="mt-1">
-                  <Badge tone={detailMember.role === "admin" ? "brand" : "neutral"}>
-                    {detailMember.role === "admin" ? "Admin" : "Member"}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-hairline bg-tile/50 p-4">
-              <dl className="space-y-3 text-sm">
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="text-ink-muted">Email</dt>
-                  <dd className="truncate text-ink">{detailMember.email}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="text-ink-muted">Username</dt>
-                  <dd className="text-ink">@{detailMember.username}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="text-ink-muted">Joined</dt>
-                  <dd className="text-ink">{formatDate(detailMember.joinedAt)}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="text-ink-muted">Last active</dt>
-                  <dd className="text-ink">{timeAgo(detailMember.lastActiveAt)}</dd>
-                </div>
-              </dl>
-            </div>
-
-            <div>
-              <h3 className="mb-3 text-sm font-semibold text-ink">Email history</h3>
-              {detailInvites.length === 0 ? (
-                <p className="text-sm text-ink-muted">No emails have been sent to this member yet.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {detailInvites.map((invite) => (
-                    <li
-                      key={invite.id}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-hairline bg-surface px-3.5 py-2.5"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        {invite.type === "reset" ? (
-                          <KeyRound className="h-4 w-4 text-warning-500" />
-                        ) : invite.type === "resend" ? (
-                          <MailPlus className="h-4 w-4 text-gold" />
-                        ) : (
-                          <Mail className="h-4 w-4 text-brand-500" />
-                        )}
-                        <div>
-                          <div className="text-sm font-medium text-ink">
-                            {INVITE_TYPE_META[invite.type].label}
-                          </div>
-                          <div className="text-xs text-ink-muted">by {invite.sentBy}</div>
-                        </div>
-                      </div>
-                      <span className="shrink-0 text-xs text-ink-muted">{timeAgo(invite.sentAt)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
-      </Drawer>
-    </div>
+    </>
   );
 }

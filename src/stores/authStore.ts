@@ -29,7 +29,7 @@ type AuthState = {
    * the httpOnly `pa_rt` refresh cookie instead (see `restore`).
    */
   accessToken: string | null;
-  /** Signs in against POST /admin/auth/login. Rejects with `ApiError` for the form to render. */
+  /** Signs in against POST /auth/login. Rejects with `ApiError` for the form to render. */
   signIn: (email: string, password: string) => Promise<void>;
   /** Clears the session immediately; token revocation completes in the background (idempotent). */
   signOut: () => void;
