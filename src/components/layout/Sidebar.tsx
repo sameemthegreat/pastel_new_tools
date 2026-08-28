@@ -22,6 +22,31 @@ function NavLink({
   onNavigate?: () => void;
 }) {
   const Icon = item.icon;
+
+  // Not built yet: render an inert row with a "Soon" chip instead of a link that would 404.
+  if (item.comingSoon) {
+    return (
+      <span
+        aria-disabled
+        title={collapsed ? `${item.label} — coming soon` : "Coming soon"}
+        className={cn(
+          "relative flex cursor-default items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-muted/70",
+          collapsed && "justify-center px-0 py-2.5"
+        )}
+      >
+        <span className="relative shrink-0">
+          <Icon size={18} strokeWidth={2} />
+        </span>
+        {!collapsed && <span className="truncate">{item.label}</span>}
+        {!collapsed && (
+          <span className="ml-auto shrink-0 rounded-full bg-tile px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide leading-none text-ink-muted">
+            Soon
+          </span>
+        )}
+      </span>
+    );
+  }
+
   return (
     <Link
       href={item.href}

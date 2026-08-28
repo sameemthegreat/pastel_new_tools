@@ -45,7 +45,7 @@ export type ApiUser = {
   createdAt: string;
 };
 
-/** `POST /admin/auth/login` — operator session. Refresh token arrives as the httpOnly `pa_rt` cookie. */
+/** `POST /auth/login` — operator session. Refresh token arrives as the httpOnly `pa_rt` cookie. */
 export type AdminSession = {
   user: ApiUser;
   adminRole: AdminRole;

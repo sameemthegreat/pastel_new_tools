@@ -1,167 +1,191 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Ban,
-  ExternalLink,
-  ShieldAlert,
-  ShieldCheck,
-  Trash2,
-} from "lucide-react";
-import { Avatar } from "@/components/ui/Avatar";
-import { Badge, StatusBadge } from "@/components/ui/Badge";
+import { Ban, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Drawer } from "@/components/ui/Drawer";
-import { Select } from "@/components/ui/Select";
+import { Modal } from "@/components/ui/Modal";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { Textarea } from "@/components/ui/Textarea";
-import { formatCurrency, formatDate, timeAgo } from "@/lib/format";
-import { useUsersStore } from "@/stores/usersStore";
-import type { MarketUser, UserType } from "@/types/users";
+import { banUser, getUser, restrictUser, unrestrictUser } from "@/lib/api/admin";
+import { ApiError } from "@/lib/api/client";
+import { formatDateTime, timeAgo } from "@/lib/format";
+import { toast } from "@/stores/uiStore";
+import type { AccountStatus, AdminUserDetail } from "@/types/admin";
 
-type ModForm = "restrict" | "unrestrict" | "delete";
+type ModAction = "restrict" | "ban";
 
-function UserStatusBadge({ user }: { user: MarketUser }) {
-  if (user.status === "banned") {
-    return (
-      <Badge tone="error" dot>
-        Banned
-      </Badge>
-    );
-  }
-  return <StatusBadge status={user.status} />;
+const STATUS_TONES: Record<AccountStatus, BadgeTone> = {
+  active: "success",
+  restricted: "warning",
+  banned: "error",
+  deleted: "neutral",
+};
+
+function statusLabel(status: AccountStatus): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-function StatTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-tile px-3 py-2.5">
-      <p className="text-xs text-ink-muted">{label}</p>
-      <p className="mt-0.5 text-lg font-bold tabular-nums tracking-tight text-ink">
-        {value}
-      </p>
-    </div>
-  );
+/** "restrict" → warning, "unrestrict" → success, "ban" → error; anything else neutral. */
+function historyTone(action: string): BadgeTone {
+  const a = action.toLowerCase();
+  if (a.includes("unrestrict")) return "success";
+  if (a.includes("ban")) return "error";
+  if (a.includes("restrict")) return "warning";
+  return "neutral";
 }
 
-function MetaRow({ label, value }: { label: string; value?: string }) {
-  if (!value) return null;
-  return (
-    <div className="flex items-baseline justify-between gap-4 py-1.5">
-      <span className="shrink-0 text-xs text-ink-muted">{label}</span>
-      <span className="text-right text-sm text-ink">{value}</span>
-    </div>
-  );
+function historyLabel(action: string): string {
+  const label = action.replace(/_/g, " ").toLowerCase();
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 export function UserDetailDrawer({
   userId,
-  open,
   onClose,
+  onChanged,
 }: {
   userId: string | null;
-  open: boolean;
   onClose: () => void;
+  onChanged: () => void;
 }) {
-  const users = useUsersStore((s) => s.users);
-  const pending = useUsersStore((s) => s.pending);
-  const restrict = useUsersStore((s) => s.restrict);
-  const unrestrict = useUsersStore((s) => s.unrestrict);
-  const changeRole = useUsersStore((s) => s.changeRole);
-  const deleteAccount = useUsersStore((s) => s.deleteAccount);
+  const [detail, setDetail] = useState<AdminUserDetail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Bumped to refetch the detail (retry button, after a successful action).
+  const [fetchKey, setFetchKey] = useState(0);
 
-  const user = userId ? users.find((u) => u.id === userId) ?? null : null;
-
-  const [modForm, setModForm] = useState<ModForm | null>(null);
+  const [action, setAction] = useState<ModAction | null>(null);
   const [reason, setReason] = useState("");
-  const [reasonError, setReasonError] = useState("");
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reasonError, setReasonError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Reset the moderation form whenever a different user is opened.
+  const [unrestrictOpen, setUnrestrictOpen] = useState(false);
+
+  // Opening a different user (or closing the drawer) clears the previous
+  // detail and any in-progress moderation form. Resetting during render
+  // (adjust-state-during-render, as DataTable does) means stale content never
+  // paints; a same-user refetch keeps the current detail visible. The effect
+  // below only fetches.
+  const [prevUserId, setPrevUserId] = useState<string | null>(userId);
+  if (prevUserId !== userId) {
+    setPrevUserId(userId);
+    setDetail(null);
+    setLoadError(null);
+    setAction(null);
+    setReason("");
+    setReasonError(null);
+    setActionError(null);
+    setUnrestrictOpen(false);
+  }
+
+  // Fetch the detail whenever a user is opened (or a refetch is requested).
   useEffect(() => {
-    setModForm(null);
+    if (!userId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const fetched = await getUser(userId);
+        if (!cancelled) setDetail(fetched);
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(
+            err instanceof ApiError ? err.message : "Could not load this user's details."
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, fetchKey]);
+
+  // Starts a refetch of the open user; called from event handlers, where the
+  // synchronous error-clear is fine.
+  function refetchDetail() {
+    setLoadError(null);
+    setFetchKey((k) => k + 1);
+  }
+
+  function openAction(kind: ModAction) {
+    setAction(kind);
     setReason("");
-    setReasonError("");
-    setConfirmOpen(false);
-  }, [userId]);
+    setReasonError(null);
+    setActionError(null);
+  }
 
-  // If the open user disappears (account deleted), close the drawer.
-  useEffect(() => {
-    if (open && userId && !user) onClose();
-  }, [open, userId, user, onClose]);
-
-  const isPending = user !== null && pending?.userId === user.id;
-
-  const beginForm = (kind: ModForm) => {
-    setModForm(kind);
+  function closeAction() {
+    if (submitting) return;
+    setAction(null);
     setReason("");
-    setReasonError("");
-  };
+    setReasonError(null);
+    setActionError(null);
+  }
 
-  const cancelForm = () => {
-    setModForm(null);
-    setReason("");
-    setReasonError("");
-  };
-
-  const handleContinue = () => {
-    if (modForm !== "unrestrict" && reason.trim().length < 10) {
+  async function submitAction() {
+    if (!detail || !action || submitting) return;
+    const trimmed = reason.trim();
+    if (!trimmed) {
       setReasonError(
-        "Please give a reason (at least 10 characters) — it is stored in the audit trail."
+        action === "ban"
+          ? "A reason is required before the account can be banned."
+          : "A reason is required before the account can be restricted."
       );
       return;
     }
-    setReasonError("");
-    setConfirmOpen(true);
-  };
+    setReasonError(null);
+    setActionError(null);
+    setSubmitting(true);
+    try {
+      if (action === "ban") {
+        await banUser(detail.id, trimmed);
+        toast({ title: "Account banned", description: detail.email, tone: "success" });
+      } else {
+        await restrictUser(detail.id, trimmed);
+        toast({ title: "Account restricted", description: detail.email, tone: "success" });
+      }
+      setAction(null);
+      setReason("");
+      refetchDetail();
+      onChanged();
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError
+          ? err.message
+          : "The action could not be completed. Please try again."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
-  const handleConfirm = () => {
-    if (!user || !modForm) return;
-    setConfirmOpen(false);
-    const trimmed = reason.trim();
-    if (modForm === "restrict") restrict(user.id, trimmed);
-    if (modForm === "unrestrict")
-      unrestrict(user.id, trimmed || "Restriction lifted after review.");
-    if (modForm === "delete") deleteAccount(user.id, trimmed);
-    setModForm(null);
-    setReason("");
-  };
+  async function handleUnrestrict() {
+    if (!detail) return;
+    setUnrestrictOpen(false);
+    try {
+      await unrestrictUser(detail.id);
+      toast({ title: "Restriction lifted", description: detail.email, tone: "success" });
+      refetchDetail();
+      onChanged();
+    } catch (err) {
+      toast({
+        title: "Could not lift the restriction",
+        description: err instanceof ApiError ? err.message : detail.email,
+        tone: "error",
+      });
+    }
+  }
 
-  const confirmCopy =
-    user && modForm === "restrict"
-      ? {
-          title: "Restrict this account?",
-          message: `${user.displayName} will be blocked from selling and purchasing, and any published listings will be closed. Reason: "${reason.trim()}"`,
-          confirmLabel: "Restrict account",
-          tone: "danger" as const,
-        }
-      : user && modForm === "unrestrict"
-        ? {
-            title: "Lift this restriction?",
-            message: `${user.displayName} will regain full access to buying${user.userType === "seller" ? " and selling" : ""}. The decision is recorded in the restriction history.`,
-            confirmLabel: "Unrestrict account",
-            tone: "brand" as const,
-          }
-        : user && modForm === "delete"
-          ? {
-              title: "Delete this account?",
-              message: `This permanently removes ${user.displayName}'s profile, listings, and history, and appends an entry to the deletion log. This cannot be undone. Reason: "${reason.trim()}"`,
-              confirmLabel: "Delete account",
-              tone: "danger" as const,
-            }
-          : null;
-
-  const published =
-    user?.listings.filter((l) => l.state === "published").length ?? 0;
-  const closed = user?.listings.filter((l) => l.state === "closed").length ?? 0;
-  const restrictions =
-    user?.restrictionHistory.filter((h) => h.action === "restrict").length ?? 0;
+  const loading = userId !== null && detail === null && loadError === null;
 
   return (
     <Drawer
-      open={open}
+      open={userId !== null}
       onClose={onClose}
       title="User detail"
-      description={user ? `@${user.handle} · ${user.email}` : undefined}
+      description={detail?.email}
       width="lg"
       footer={
         <Button variant="outline" onClick={onClose}>
@@ -169,289 +193,192 @@ export function UserDetailDrawer({
         </Button>
       }
     >
-      {user && (
+      {loading && (
+        <div className="space-y-4">
+          <Skeleton className="h-6 w-2/3" />
+          <Skeleton className="h-4 w-1/3" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+      )}
+
+      {loadError && (
+        <div className="rounded-xl border border-danger/25 bg-danger/5 p-4">
+          <p className="text-sm font-medium text-danger">{loadError}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={refetchDetail}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {detail && (
         <div className="space-y-6">
-          {/* Profile block */}
-          <div className="flex items-start gap-4">
-            <Avatar name={user.displayName} size="lg" />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-lg font-semibold tracking-tight text-ink">
-                  {user.displayName}
-                </h3>
-                <Badge tone={user.userType === "seller" ? "forest" : "neutral"}>
-                  {user.userType === "seller" ? "Seller" : "Buyer"}
-                </Badge>
-                <UserStatusBadge user={user} />
+          {/* Identity */}
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-semibold tracking-tight text-ink">{detail.email}</h3>
+              <Badge tone={STATUS_TONES[detail.accountStatus]} dot>
+                {statusLabel(detail.accountStatus)}
+              </Badge>
+            </div>
+            <p className="mt-1 font-mono text-xs text-ink-muted">{detail.id}</p>
+          </div>
+
+          {/* Account facts */}
+          <div className="rounded-2xl border border-hairline bg-tile/50 p-4">
+            <dl className="space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-ink-muted">Account type</dt>
+                <dd className="capitalize text-ink">{detail.userType}</dd>
               </div>
-              <p className="mt-0.5 truncate text-sm text-ink-secondary">
-                {user.email}
-              </p>
-              {user.userType === "seller" && user.businessName && (
-                <p className="mt-1 flex items-center gap-2 text-sm text-ink">
-                  <span className="font-medium">{user.businessName}</span>
-                  <a
-                    href={`https://mypastel.com/${user.handle}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
-                  >
-                    View store <ExternalLink size={12} aria-hidden="true" />
-                  </a>
-                </p>
-              )}
-              {user.bio && (
-                <p className="mt-2 text-sm text-ink-secondary">{user.bio}</p>
-              )}
-            </div>
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-ink-muted">Restricted at</dt>
+                <dd className="text-ink">
+                  {detail.restrictedAt ? formatDateTime(detail.restrictedAt) : "—"}
+                </dd>
+              </div>
+            </dl>
           </div>
-
-          {/* Status banners */}
-          {user.status === "restricted" && (
-            <div className="flex items-start gap-2.5 rounded-xl border border-warning-100 bg-warning-50 p-3.5">
-              <ShieldAlert
-                size={16}
-                className="mt-0.5 shrink-0 text-warning-700"
-                aria-hidden="true"
-              />
-              <p className="text-sm text-warning-700">
-                <span className="font-semibold">
-                  Restricted{" "}
-                  {user.restrictedAt ? `on ${formatDate(user.restrictedAt)}` : ""}
-                  .
-                </span>{" "}
-                {user.restrictionReason}
-              </p>
-            </div>
-          )}
-          {user.status === "banned" && (
-            <div className="flex items-start gap-2.5 rounded-xl border border-error-100 bg-error-50 p-3.5">
-              <Ban
-                size={16}
-                className="mt-0.5 shrink-0 text-error-700"
-                aria-hidden="true"
-              />
-              <p className="text-sm text-error-700">
-                <span className="font-semibold">
-                  Banned{" "}
-                  {user.restrictedAt ? `on ${formatDate(user.restrictedAt)}` : ""}
-                  .
-                </span>{" "}
-                {user.restrictionReason}
-              </p>
-            </div>
-          )}
-
-          {/* Stats grid */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <StatTile label="Listings" value={String(user.listings.length)} />
-            <StatTile label="Published" value={String(published)} />
-            <StatTile label="Closed" value={String(closed)} />
-            <StatTile label="Restrictions" value={String(restrictions)} />
-          </div>
-
-          {/* Meta */}
-          <div className="rounded-xl border border-hairline px-4 py-2">
-            <MetaRow label="Location" value={user.location} />
-            <MetaRow label="Phone" value={user.phone} />
-            <MetaRow label="Joined" value={formatDate(user.createdAt)} />
-            <MetaRow label="Last seen" value={timeAgo(user.lastSeenAt)} />
-          </div>
-
-          {/* Seller listings mini-table */}
-          {user.userType === "seller" && (
-            <section>
-              <h4 className="mb-2 text-sm font-semibold text-ink">
-                Listings ({user.listings.length})
-              </h4>
-              {user.listings.length === 0 ? (
-                <p className="rounded-xl border border-hairline bg-tile/50 p-4 text-sm text-ink-muted">
-                  This seller has no listings yet.
-                </p>
-              ) : (
-                <div className="overflow-x-auto rounded-xl border border-hairline">
-                  <table className="w-full min-w-[440px] text-sm">
-                    <thead>
-                      <tr className="bg-tile/60 text-left text-xs font-medium uppercase tracking-wide text-ink-secondary">
-                        <th className="px-3.5 py-2.5">Title</th>
-                        <th className="px-3.5 py-2.5 text-right">Price</th>
-                        <th className="px-3.5 py-2.5">State</th>
-                        <th className="px-3.5 py-2.5">Created</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {user.listings.map((l) => (
-                        <tr key={l.id} className="border-t border-hairline">
-                          <td className="max-w-[220px] truncate px-3.5 py-2.5 text-ink">
-                            {l.title}
-                          </td>
-                          <td className="px-3.5 py-2.5 text-right font-medium tabular-nums text-price">
-                            {formatCurrency(l.priceCents / 100)}
-                          </td>
-                          <td className="px-3.5 py-2.5">
-                            <StatusBadge status={l.state} />
-                          </td>
-                          <td className="px-3.5 py-2.5 text-ink-secondary">
-                            {formatDate(l.createdAt)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          )}
 
           {/* Restriction history */}
-          {user.restrictionHistory.length > 0 && (
-            <section>
-              <h4 className="mb-2 text-sm font-semibold text-ink">
-                Restriction history
-              </h4>
+          <section>
+            <h4 className="mb-2 text-sm font-semibold text-ink">Restriction history</h4>
+            {detail.restrictionHistory.length === 0 ? (
+              <p className="rounded-xl border border-hairline bg-tile/50 p-4 text-sm text-ink-muted">
+                No moderation actions have been recorded for this account.
+              </p>
+            ) : (
               <div className="space-y-2">
-                {[...user.restrictionHistory].reverse().map((h) => (
-                  <div
-                    key={h.id}
-                    className="rounded-xl border border-hairline p-3"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Badge tone={h.action === "restrict" ? "error" : "success"}>
-                        {h.action === "restrict" ? "Restricted" : "Unrestricted"}
-                      </Badge>
-                      <span className="text-xs text-ink-muted">
-                        by {h.actor} · {formatDate(h.createdAt)}
+                {detail.restrictionHistory.map((entry) => (
+                  <div key={entry.id} className="rounded-xl border border-hairline p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge tone={historyTone(entry.action)}>{historyLabel(entry.action)}</Badge>
+                      <span className="shrink-0 text-xs text-ink-muted">
+                        {timeAgo(entry.createdAt)}
                       </span>
                     </div>
-                    <p className="mt-1.5 text-sm text-ink-secondary">
-                      {h.reason}
-                    </p>
+                    <p className="mt-1.5 text-sm text-ink-secondary">{entry.reason}</p>
+                    <p className="mt-1 text-xs text-ink-muted">by {entry.adminActor}</p>
                   </div>
                 ))}
               </div>
-            </section>
-          )}
+            )}
+          </section>
 
           {/* Moderation actions */}
           <section className="rounded-2xl border border-hairline bg-surface p-4 shadow-xs">
             <h4 className="text-sm font-semibold text-ink">Moderation</h4>
             <p className="mt-0.5 text-xs text-ink-muted">
-              Every action is recorded in the audit trail.
+              Every action is recorded in the restriction history with your operator identity.
             </p>
-
-            <div className={isPending ? "pointer-events-none opacity-60" : ""}>
-              <div className="mt-4 max-w-xs">
-                <Select
-                  label="Account role"
-                  value={user.userType}
-                  onChange={(v) => changeRole(user.id, v as UserType)}
-                  options={[
-                    { value: "seller", label: "Seller" },
-                    { value: "buyer", label: "Buyer" },
-                  ]}
-                />
-                <p className="mt-1.5 text-xs text-ink-muted">
-                  Demoting a seller to buyer closes their published listings.
-                </p>
-              </div>
-            </div>
-
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              {user.status === "active" && (
-                <Button
-                  variant="outline"
-                  icon={ShieldAlert}
-                  loading={isPending && pending?.kind === "restrict"}
-                  disabled={isPending}
-                  onClick={() => beginForm("restrict")}
-                >
-                  Restrict account
-                </Button>
+              {detail.accountStatus === "active" && (
+                <>
+                  <Button variant="outline" onClick={() => openAction("restrict")}>
+                    <ShieldAlert size={16} className="text-warning-500" aria-hidden /> Restrict
+                    account
+                  </Button>
+                  <Button variant="danger" icon={Ban} onClick={() => openAction("ban")}>
+                    Ban account
+                  </Button>
+                </>
               )}
-              {user.status === "restricted" && (
-                <Button
-                  variant="secondary"
-                  icon={ShieldCheck}
-                  loading={isPending && pending?.kind === "unrestrict"}
-                  disabled={isPending}
-                  onClick={() => beginForm("unrestrict")}
-                >
-                  Unrestrict account
-                </Button>
+              {detail.accountStatus === "restricted" && (
+                <>
+                  <Button variant="primary" icon={ShieldCheck} onClick={() => setUnrestrictOpen(true)}>
+                    Unrestrict account
+                  </Button>
+                  <Button variant="danger" icon={Ban} onClick={() => openAction("ban")}>
+                    Ban account
+                  </Button>
+                </>
               )}
-              {user.status === "banned" && (
+              {detail.accountStatus === "banned" && (
                 <p className="text-sm text-ink-muted">
-                  Banned accounts are read-only. Deleting removes the account
-                  permanently.
+                  Banned accounts stay banned — no further moderation actions are available.
                 </p>
               )}
-              <Button
-                variant="danger"
-                icon={Trash2}
-                loading={isPending && pending?.kind === "delete"}
-                disabled={isPending}
-                onClick={() => beginForm("delete")}
-              >
-                Delete account
-              </Button>
+              {detail.accountStatus === "deleted" && (
+                <p className="text-sm text-ink-muted">
+                  This account has been deleted, so moderation actions are no longer available.
+                </p>
+              )}
             </div>
-
-            {modForm && (
-              <div className="mt-4 space-y-3 rounded-xl border border-hairline bg-cream/60 p-4">
-                <Textarea
-                  label={
-                    modForm === "restrict"
-                      ? "Reason for restriction"
-                      : modForm === "unrestrict"
-                        ? "Reason for lifting (optional)"
-                        : "Reason for deletion"
-                  }
-                  placeholder={
-                    modForm === "restrict"
-                      ? "e.g. Repeated authenticity complaints on listed items…"
-                      : modForm === "unrestrict"
-                        ? "e.g. Appeal reviewed — evidence verified…"
-                        : "e.g. Fraudulent storefront confirmed by payments team…"
-                  }
-                  rows={3}
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  error={reasonError || undefined}
-                  hint={
-                    modForm === "delete"
-                      ? "The reason is appended to the deletion log."
-                      : undefined
-                  }
-                />
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant={modForm === "unrestrict" ? "primary" : "danger"}
-                    onClick={handleContinue}
-                  >
-                    Continue
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={cancelForm}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
           </section>
         </div>
       )}
 
-      {confirmCopy && (
-        <ConfirmDialog
-          open={confirmOpen}
-          onClose={() => setConfirmOpen(false)}
-          onConfirm={handleConfirm}
-          title={confirmCopy.title}
-          message={confirmCopy.message}
-          confirmLabel={confirmCopy.confirmLabel}
-          tone={confirmCopy.tone}
-        />
-      )}
+      {/* Restrict / Ban — reason is required by the backend */}
+      <Modal
+        open={action !== null}
+        onClose={closeAction}
+        title={action === "ban" ? "Ban this account" : "Restrict this account"}
+        description={
+          action === "ban"
+            ? "The account is locked out permanently. Bans cannot be lifted from the console."
+            : "The account loses buying and selling access until an operator lifts the restriction."
+        }
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={closeAction} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button
+              variant={action === "ban" ? "danger" : "primary"}
+              loading={submitting}
+              onClick={() => void submitAction()}
+            >
+              {action === "ban" ? "Ban account" : "Restrict account"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {actionError && (
+            <p
+              role="alert"
+              className="rounded-xl border border-danger/25 bg-danger/10 px-3.5 py-2.5 text-sm font-medium text-danger"
+            >
+              {actionError}
+            </p>
+          )}
+          <Textarea
+            label={action === "ban" ? "Reason for ban" : "Reason for restriction"}
+            required
+            rows={4}
+            maxLength={2000}
+            placeholder={
+              action === "ban"
+                ? "e.g. Fraudulent storefront confirmed by the payments team…"
+                : "e.g. Repeated authenticity complaints on listed items…"
+            }
+            value={reason}
+            onChange={(e) => {
+              setReason(e.target.value);
+              if (reasonError) setReasonError(null);
+            }}
+            error={reasonError ?? undefined}
+            hint="Required — stored in the restriction history. Up to 2,000 characters."
+          />
+        </div>
+      </Modal>
+
+      {/* Unrestrict */}
+      <ConfirmDialog
+        open={unrestrictOpen}
+        onClose={() => setUnrestrictOpen(false)}
+        onConfirm={() => void handleUnrestrict()}
+        title="Lift this restriction?"
+        message={`${detail?.email ?? "This account"} regains full access to buying and selling immediately. The decision is recorded in the restriction history.`}
+        confirmLabel="Unrestrict account"
+        tone="brand"
+      />
     </Drawer>
   );
 }
