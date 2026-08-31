@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { deleteContentPulseImport, listContentPulseImports } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDateTime, formatNumber } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { CpImport } from "@/types/admin";
 
@@ -21,6 +22,8 @@ export function ImportsTab({
   refreshKey: number;
   onImportFile: () => void;
 }) {
+  // UI courtesy only — the Content Pulse write routes enforce contentPulse.manage themselves.
+  const canManage = useAuthStore((s) => s.can("contentPulse.manage"));
   const [imports, setImports] = useState<CpImport[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<CpImport | null>(null);
@@ -118,11 +121,12 @@ export function ImportsTab({
       key: "actions",
       header: "",
       align: "right",
-      render: (i) => (
-        <Button variant="ghost" size="sm" onClick={() => setDeleting(i)}>
-          Delete
-        </Button>
-      ),
+      render: (i) =>
+        canManage ? (
+          <Button variant="ghost" size="sm" onClick={() => setDeleting(i)}>
+            Delete
+          </Button>
+        ) : null,
     },
   ];
 
@@ -148,9 +152,11 @@ export function ImportsTab({
             title="No imports yet"
             description="Every metric on this page comes from platform export files. Import the first one to start tracking posts."
             action={
-              <Button onClick={onImportFile}>
-                <Upload size={15} aria-hidden /> Import file
-              </Button>
+              canManage ? (
+                <Button onClick={onImportFile}>
+                  <Upload size={15} aria-hidden /> Import file
+                </Button>
+              ) : undefined
             }
           />
         </Card>

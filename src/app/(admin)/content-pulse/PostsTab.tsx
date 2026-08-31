@@ -17,6 +17,7 @@ import {
 } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatCompact, formatDate, timeAgo } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { CpEmployee, CpMetricSnapshot, CpPost, PageMeta } from "@/types/admin";
 
@@ -48,6 +49,8 @@ function mergeTypes(prev: string[], posts: CpPost[]): string[] {
 }
 
 export function PostsTab({ refreshKey }: { refreshKey: number }) {
+  // UI courtesy only — the Content Pulse write routes enforce contentPulse.manage themselves.
+  const canManage = useAuthStore((s) => s.can("contentPulse.manage"));
   const [items, setItems] = useState<CpPost[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -299,6 +302,7 @@ export function PostsTab({ refreshKey }: { refreshKey: number }) {
         <div className="w-40">
           <Select
             value={p.employee?.id ?? ""}
+            disabled={!canManage}
             onChange={(v) => void assignOwner(p, v)}
             options={ownerOptions(p)}
           />

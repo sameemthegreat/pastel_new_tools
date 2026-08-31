@@ -11,6 +11,7 @@ export function Select({
   options,
   placeholder,
   className,
+  disabled,
 }: {
   label?: string;
   value: string;
@@ -18,6 +19,8 @@ export function Select({
   options: { value: string; label: string }[];
   placeholder?: string;
   className?: string;
+  /** Renders greyed and inert — the `disabled:` classes below were always waiting for this. */
+  disabled?: boolean;
 }) {
   const generatedId = React.useId();
 
@@ -35,6 +38,7 @@ export function Select({
         <select
           id={generatedId}
           value={value}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           className={cn(
             "h-9 w-full appearance-none rounded-lg border border-hairline bg-surface pl-3 pr-9 text-sm shadow-xs",

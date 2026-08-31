@@ -43,7 +43,9 @@ function memberName(member: OperatorMember): string {
 
 export default function TeamPage() {
   const user = useAuthStore((s) => s.user);
-  const isSuperAdmin = user?.role === "superAdmin";
+  // The backend reserves team.manage to superAdmin; read the capability rather than re-deriving
+  // the rule from the role, so a policy change on the server carries the UI with it.
+  const canManage = useAuthStore((s) => s.can("team.manage"));
 
   const [team, setTeam] = useState<OperatorMember[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -175,7 +177,7 @@ export default function TeamPage() {
       width: "w-44",
       sortValue: (m) => m.role,
       render: (m) =>
-        isSuperAdmin && m.userId !== user?.id ? (
+        canManage && m.userId !== user?.id ? (
           <Select
             value={m.role}
             onChange={(v) => void handleRoleChange(m, v as AdminRole)}
@@ -210,7 +212,7 @@ export default function TeamPage() {
         </span>
       ),
     },
-    ...(isSuperAdmin
+    ...(canManage
       ? [
           {
             key: "actions",
@@ -243,7 +245,7 @@ export default function TeamPage() {
             <Button variant="outline" onClick={() => void load()}>
               <RefreshCw size={15} aria-hidden /> Refresh
             </Button>
-            {isSuperAdmin && (
+            {canManage && (
               <Button icon={UserPlus} onClick={openAdd}>
                 Add operator
               </Button>
@@ -252,10 +254,10 @@ export default function TeamPage() {
         }
       />
 
-      {!isSuperAdmin && (
+      {!canManage && (
         <p className="mb-4 text-sm text-ink-muted">
           You can see the team here, but adding operators, changing roles, and revoking access
-          need a super admin.
+          need the team.manage capability — a super admin.
         </p>
       )}
 
@@ -279,7 +281,7 @@ export default function TeamPage() {
             title="No operators yet"
             description="Grant console access to an existing Pastel account and they can sign in with their own credentials."
             action={
-              isSuperAdmin ? <Button onClick={openAdd}>Add operator</Button> : undefined
+              canManage ? <Button onClick={openAdd}>Add operator</Button> : undefined
             }
           />
         </Card>

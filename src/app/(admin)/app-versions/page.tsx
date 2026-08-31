@@ -27,6 +27,7 @@ import { DonutChart } from "@/components/charts/DonutChart";
 import { fetchBundleAdoption, listNativeLogs, setStableVersion } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDateTime, formatNumber, timeAgo } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type {
   BundleAdoption,
@@ -76,6 +77,8 @@ function detailsText(data: unknown): string {
 }
 
 export default function AppVersionsPage() {
+  // UI courtesy only — PUT /admin/app-versions/stable enforces appVersions.manage.
+  const canPin = useAuthStore((s) => s.can("appVersions.manage"));
   const [tab, setTab] = useState<TabKey>("adoption");
 
   // ── Adoption ────────────────────────────────────────────────────────────
@@ -474,7 +477,7 @@ export default function AppVersionsPage() {
                     />
                     <Button
                       loading={pinning}
-                      disabled={!pinValue.trim()}
+                      disabled={!canPin || !pinValue.trim()}
                       onClick={() => void handlePin()}
                     >
                       Pin version
@@ -482,7 +485,7 @@ export default function AppVersionsPage() {
                     <Button
                       variant="ghost"
                       loading={clearing}
-                      disabled={!adoption.stableVersion}
+                      disabled={!canPin || !adoption.stableVersion}
                       onClick={() => setClearOpen(true)}
                     >
                       Clear pin

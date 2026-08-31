@@ -7,16 +7,20 @@ export function Switch({
   checked,
   onChange,
   label,
+  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label?: string;
+  /** Renders greyed and inert — the `disabled:` classes below were always waiting for this. */
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
       className="group inline-flex items-center gap-2.5 disabled:cursor-not-allowed disabled:opacity-50"
     >

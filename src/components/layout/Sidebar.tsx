@@ -6,7 +6,7 @@ import { LogOut, Palette, PanelLeftClose, PanelLeftOpen, X } from "lucide-react"
 import { NAV_GROUPS, type NavItem } from "@/components/layout/nav";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/cn";
-import { useAuthStore } from "@/stores/authStore";
+import { operatorCan, useAuthStore } from "@/stores/authStore";
 import { ADMIN_ROLE_LABELS } from "@/types/auth";
 import { useUIStore } from "@/stores/uiStore";
 
@@ -103,7 +103,9 @@ function SidebarContent({
 
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !item.adminOnly || user?.role === "superAdmin"),
+    items: group.items.filter(
+      (item) => !item.capability || operatorCan(user, item.capability)
+    ),
   })).filter((group) => group.items.length > 0);
 
   return (

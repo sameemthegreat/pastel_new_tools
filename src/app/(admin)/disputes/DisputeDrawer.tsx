@@ -18,6 +18,7 @@ import {
 } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatCurrency, formatDate, timeAgo } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { AdminDispute, DisputeStatus, RefundEligibility } from "@/types/admin";
 
@@ -157,9 +158,12 @@ export function DisputeDrawer({
 
   // ── Eligibility gating: substring match, unknown names stay visible below ──
   const resolutions = eligibility?.availableResolutions ?? [];
-  const canRefund = resolutions.some((r) => r.toLowerCase().includes("refund"));
-  const canRelease = resolutions.some((r) => r.toLowerCase().includes("release"));
-  const canReplace = resolutions.some((r) => r.toLowerCase().includes("replacement"));
+  // Two independent gates: what the ORDER allows, and what this operator may do. Both must hold —
+  // orders.act is enforced on the request too, so this only avoids offering a button that 403s.
+  const mayAct = useAuthStore((s) => s.can("orders.act"));
+  const canRefund = mayAct && resolutions.some((r) => r.toLowerCase().includes("refund"));
+  const canRelease = mayAct && resolutions.some((r) => r.toLowerCase().includes("release"));
+  const canReplace = mayAct && resolutions.some((r) => r.toLowerCase().includes("replacement"));
   const hasRecognizedAction = canRefund || canRelease || canReplace;
 
   async function submitFullRefund() {
@@ -405,6 +409,11 @@ export function DisputeDrawer({
                         </Button>
                       )}
                     </div>
+                  ) : !mayAct ? (
+                    <p className="text-sm text-ink-muted">
+                      Your operator role can review this dispute but not refund, release escrow, or
+                      approve a replacement.
+                    </p>
                   ) : (
                     <p className="text-sm text-ink-muted">
                       No operator action is available in this order state.

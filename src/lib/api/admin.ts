@@ -41,9 +41,18 @@ import type { AdminRole } from "@/types/auth";
 
 /**
  * Operator data endpoints. Everything here goes same-origin through `/api/admin/*` — the proxy
- * route attaches `X-Operator-Secret` server-side — with the session's Bearer token, and retries
- * exactly once through the refresh cookie when the access token has expired mid-session. A
- * refresh that fails ends the session (the layout then redirects to /login).
+ * route attaches `X-Operator-Secret` server-side — with the session's Bearer token.
+ *
+ * Two failures are handled centrally rather than by every caller:
+ *   401 → the access token expired mid-session. Refresh once through the cookie and retry; a
+ *         refresh that fails ends the session.
+ *   403 → could be a business rule ("only a super admin can…") or could mean the caller is no
+ *         longer an operator at all, because the backend re-checks the AdminMembership on every
+ *         admin request and someone revoked it a minute ago. Re-ask `GET /admin/auth/me`: if that
+ *         also refuses, the console is holding a dead session and must return to /login rather
+ *         than paint a permission error onto every page.
+ *
+ * Both end-of-session paths go through the layout, which redirects off `status`.
  */
 
 let refreshInFlight: Promise<string> | null = null;
@@ -56,7 +65,7 @@ function refreshOnce(): Promise<string> {
       useAuthStore.setState({ accessToken });
       return accessToken;
     } catch (error) {
-      useAuthStore.setState({ status: "unauthenticated", user: null, accessToken: null });
+      useAuthStore.getState().endSession();
       throw error;
     } finally {
       refreshInFlight = null;
@@ -79,6 +88,10 @@ async function request<T>(
     if (error instanceof ApiError && error.status === 401) {
       const fresh = await refreshOnce();
       return envelopeFetch<T>(`/api/admin${path}`, { ...options, accessToken: fresh });
+    }
+    if (error instanceof ApiError && error.status === 403) {
+      // Revoked → session ends and the layout redirects; otherwise it was a genuine business rule.
+      await useAuthStore.getState().revalidate();
     }
     throw error;
   }
@@ -448,9 +461,10 @@ export async function uploadContentPulseFile(file: File): Promise<CpUploadPrevie
     return await send(useAuthStore.getState().accessToken);
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
-      const fresh = await refreshAccessToken();
-      useAuthStore.setState({ accessToken: fresh.accessToken });
-      return send(fresh.accessToken);
+      return send(await refreshOnce());
+    }
+    if (error instanceof ApiError && error.status === 403) {
+      await useAuthStore.getState().revalidate();
     }
     throw error;
   }

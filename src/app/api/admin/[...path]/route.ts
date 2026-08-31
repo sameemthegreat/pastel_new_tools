@@ -1,10 +1,16 @@
 import { type NextRequest } from "next/server";
 
 /**
- * Operator proxy (BFF). Every admin data endpoint on the backend sits behind OperatorGuard,
- * which demands the `X-Operator-Secret` header on top of the caller's Bearer token. That secret
- * must never reach the browser, so the console calls `/api/admin/*` same-origin and this handler
- * forwards to `${BACKEND}/admin/*`, attaching the secret server-side.
+ * Operator proxy (BFF). Every admin data endpoint on the backend sits behind OperatorGuard, which
+ * authorises on the caller's own active AdminMembership and demands the `X-Operator-Secret` header
+ * as a second factor. That secret must never reach the browser, so the console calls `/api/admin/*`
+ * same-origin and this handler forwards to `${BACKEND}/admin/*`, attaching the secret server-side.
+ *
+ * The secret is only ever attached to a request that CARRIES A BEARER TOKEN. Without one the
+ * backend would 401 anyway, but answering here keeps this route from being a free oracle that
+ * spends the console's secret on behalf of any anonymous caller who can reach the origin — the
+ * proxy is the one place in the system that can speak with the secret, so it should speak only
+ * for someone.
  *
  * Only the caller's Authorization header and JSON body are forwarded — cookies are not, so the
  * refresh-token cookie never transits the proxy. Auth endpoints (login/refresh/logout) keep
@@ -37,16 +43,21 @@ async function forward(
     );
   }
 
+  // No bearer, no secret: never spend the operator credential on an unidentified caller.
+  const authorization = request.headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return envelopeError(401, "Authentication required");
+  }
+
   const { path } = await ctx.params;
   const search = request.nextUrl.search;
   const target = `${BACKEND_BASE_URL}/admin/${path.map(encodeURIComponent).join("/")}${search}`;
 
   const headers: Record<string, string> = {
     Accept: "application/json",
+    Authorization: authorization,
     "X-Operator-Secret": secret,
   };
-  const authorization = request.headers.get("authorization");
-  if (authorization) headers.Authorization = authorization;
   const idempotencyKey = request.headers.get("idempotency-key");
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 

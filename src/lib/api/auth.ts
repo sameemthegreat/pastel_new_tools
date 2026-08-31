@@ -12,11 +12,15 @@ import type {
  */
 
 /**
- * POST /auth/login — operator sign-in.
+ * POST /admin/auth/login — operator sign-in.
  * 401: wrong email/password · 403: banned account or no active AdminMembership · 429: throttled.
+ *
+ * NOT `/auth/login`: that is the marketplace endpoint, which happily signs in any customer and
+ * returns no `adminRole`. Operator standing has to be established at the door — the console must
+ * never hold a session it will then hand the operator secret on behalf of.
  */
 export function loginToAdminConsole(email: string, password: string): Promise<AdminSession> {
-  return apiFetch<AdminSession>("/auth/login", {
+  return apiFetch<AdminSession>("/admin/auth/login", {
     method: "POST",
     body: { email, password },
   });
