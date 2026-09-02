@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Link2,
   Mail,
+  Package,
   Pin,
   Receipt,
   Scale,
@@ -68,6 +69,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Operations",
     items: [
+      { label: "Orders", href: "/orders", icon: Package, capability: "orders.read" },
       { label: "Disputes", href: "/disputes", icon: Scale, capability: "disputes.read" },
       { label: "Sales Tax", href: "/sales-tax", icon: Receipt, capability: "salesTax.read" },
       {

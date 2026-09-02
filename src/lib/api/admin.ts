@@ -3,7 +3,9 @@ import { refreshAccessToken } from "@/lib/api/auth";
 import { useAuthStore } from "@/stores/authStore";
 import type {
   AdminDispute,
+  AdminDisputeDetail,
   AdminOrder,
+  AdminOrderDetail,
   AdminUser,
   AnalyticsDay,
   BundleAdoption,
@@ -277,12 +279,20 @@ export function listOrders(params: {
   return adminFetchPage<AdminOrder>("/orders", params);
 }
 
+export function getOrder(id: string): Promise<AdminOrderDetail> {
+  return adminFetch<AdminOrderDetail>(`/orders/${id}`);
+}
+
 export function listDisputes(params: {
   status?: string;
   cursor?: string;
   perPage?: string;
 }): Promise<Page<AdminDispute>> {
   return adminFetchPage<AdminDispute>("/disputes", params);
+}
+
+export function getDispute(id: string): Promise<AdminDisputeDetail> {
+  return adminFetch<AdminDisputeDetail>(`/disputes/${id}`);
 }
 
 export function getRefundEligibility(orderId: string): Promise<RefundEligibility> {
@@ -313,6 +323,11 @@ export function approveReplacement(orderId: string, reason?: string): Promise<un
     method: "POST",
     body: reason ? { reason } : {},
   });
+}
+
+/** Clears a chargeback payout freeze and re-arms the parked payout timers. Idempotent, no body. */
+export function unblockPayout(orderId: string): Promise<unknown> {
+  return adminFetch<unknown>(`/orders/${orderId}/unblock-payout`, { method: "POST", body: {} });
 }
 
 // ── Analytics ─────────────────────────────────────────────────────────────
