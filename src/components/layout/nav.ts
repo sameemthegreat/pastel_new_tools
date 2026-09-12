@@ -5,6 +5,7 @@ import {
   Link2,
   Mail,
   Package,
+  Palette,
   Pin,
   Receipt,
   Scale,
@@ -102,6 +103,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Smartphone,
         capability: "appVersions.read",
       },
+      { label: "Theme", href: "/theme", icon: Palette },
     ],
   },
 ];
