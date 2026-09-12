@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { banUser, getUser, restrictUser, unrestrictUser } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDateTime, timeAgo } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { AccountStatus, AdminUserDetail } from "@/types/admin";
 
@@ -51,6 +52,8 @@ export function UserDetailDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  // UI courtesy only — /admin/users/:id/{restrict,unrestrict,ban} enforce users.moderate themselves.
+  const canModerate = useAuthStore((s) => s.can("users.moderate"));
   const [detail, setDetail] = useState<AdminUserDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Bumped to refetch the detail (retry button, after a successful action).
@@ -277,7 +280,12 @@ export function UserDetailDrawer({
               Every action is recorded in the restriction history with your operator identity.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              {detail.accountStatus === "active" && (
+              {!canModerate && (
+                <p className="text-sm text-ink-muted">
+                  Your operator role can open this account but not restrict or ban it.
+                </p>
+              )}
+              {canModerate && detail.accountStatus === "active" && (
                 <>
                   <Button variant="outline" onClick={() => openAction("restrict")}>
                     <ShieldAlert size={16} className="text-warning-500" aria-hidden /> Restrict
@@ -288,7 +296,7 @@ export function UserDetailDrawer({
                   </Button>
                 </>
               )}
-              {detail.accountStatus === "restricted" && (
+              {canModerate && detail.accountStatus === "restricted" && (
                 <>
                   <Button variant="primary" icon={ShieldCheck} onClick={() => setUnrestrictOpen(true)}>
                     Unrestrict account
@@ -298,12 +306,12 @@ export function UserDetailDrawer({
                   </Button>
                 </>
               )}
-              {detail.accountStatus === "banned" && (
+              {canModerate && detail.accountStatus === "banned" && (
                 <p className="text-sm text-ink-muted">
                   Banned accounts stay banned — no further moderation actions are available.
                 </p>
               )}
-              {detail.accountStatus === "deleted" && (
+              {canModerate && detail.accountStatus === "deleted" && (
                 <p className="text-sm text-ink-muted">
                   This account has been deleted, so moderation actions are no longer available.
                 </p>

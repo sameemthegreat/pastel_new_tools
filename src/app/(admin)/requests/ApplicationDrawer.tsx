@@ -23,6 +23,7 @@ import {
 } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDate, timeAgo } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { ApplicationStatus, CrmStatus, SellerApplicationDetail } from "@/types/admin";
 
@@ -122,6 +123,9 @@ export function ApplicationDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  // UI courtesy only — the API enforces applications.annotate / applications.review on each route.
+  const canAnnotate = useAuthStore((s) => s.can("applications.annotate"));
+  const canReview = useAuthStore((s) => s.can("applications.review"));
   const [detail, setDetail] = useState<SellerApplicationDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -323,7 +327,9 @@ export function ApplicationDrawer({
   }
 
   const canReject =
-    detail !== null && (detail.status === "pending_verification" || detail.status === "verified");
+    canReview &&
+    detail !== null &&
+    (detail.status === "pending_verification" || detail.status === "verified");
 
   return (
     <Drawer
@@ -459,7 +465,12 @@ export function ApplicationDrawer({
               />
             </div>
             <div className="mt-4">
-              <Button size="sm" loading={crmSaving} onClick={() => void handleSaveCrm()}>
+              <Button
+                size="sm"
+                disabled={!canAnnotate}
+                loading={crmSaving}
+                onClick={() => void handleSaveCrm()}
+              >
                 Save pipeline
               </Button>
             </div>
@@ -500,7 +511,7 @@ export function ApplicationDrawer({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!noteBody.trim()}
+                disabled={!canAnnotate || !noteBody.trim()}
                 loading={noteSaving}
                 onClick={() => void handleAddNote()}
               >
@@ -516,7 +527,7 @@ export function ApplicationDrawer({
 
             {(detail.status === "pending_verification" || detail.status === "verified") && (
               <div className="mt-4 flex flex-wrap items-center gap-2">
-                {detail.status === "pending_verification" && (
+                {canAnnotate && detail.status === "pending_verification" && (
                   <Button
                     variant="outline"
                     icon={MailPlus}
@@ -526,7 +537,7 @@ export function ApplicationDrawer({
                     Resend verification
                   </Button>
                 )}
-                {detail.status === "verified" && (
+                {canReview && detail.status === "verified" && (
                   <Button
                     icon={BadgeCheck}
                     onClick={() => {
@@ -567,6 +578,7 @@ export function ApplicationDrawer({
                 variant="ghost"
                 size="sm"
                 icon={Trash2}
+                disabled={!canReview}
                 className="text-danger hover:bg-danger/10"
                 onClick={() => setRemoveOpen(true)}
               >

@@ -12,14 +12,10 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
 import { listDisputes } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
-import { formatCurrency, timeAgo } from "@/lib/format";
+import { formatCurrency, humanizeToken, timeAgo } from "@/lib/format";
 import { toast } from "@/stores/uiStore";
 import type { AdminDispute, DisputeStatus, PageMeta } from "@/types/admin";
-import {
-  DisputeDrawer,
-  disputeStatusMeta,
-  humanizeToken,
-} from "./DisputeDrawer";
+import { DisputeDrawer, disputeStatusMeta } from "./DisputeDrawer";
 
 const TABS = [
   { key: "all", label: "All" },

@@ -221,6 +221,64 @@ export type AdminDispute = {
   createdAt: string;
 };
 
+/** One FSM transition on an order's audit trail — GET /admin/orders/{id} `transitions`, oldest first. */
+export type OrderTransition = {
+  name: string;
+  actor: string;
+  actorUserId: string | null;
+  at: string;
+};
+
+/** One refund issued against an order — GET /admin/orders/{id} `refunds`. Amount is integer cents. */
+export type OrderRefund = {
+  id: string;
+  mode: "full" | "partial";
+  amount: number;
+  currency: string;
+  reason: string | null;
+  actor: string | null;
+  stripeRefundId: string | null;
+  createdAt: string;
+};
+
+/** GET /admin/orders/{id} — the list row plus lifecycle, payout, refund, and dispute detail. */
+export type AdminOrderDetail = AdminOrder & {
+  state: string;
+  refundStatus: "none" | "requested" | "partial" | "full";
+  payoutTotalAmount: number;
+  payoutReleased: boolean;
+  payoutReleasedAt: string | null;
+  payoutBlockedAt: string | null;
+  payoutBlockReason: string | null;
+  listingTitle: string | null;
+  buyerNote: string | null;
+  shippingAddress: unknown | null;
+  transitions: OrderTransition[];
+  refunds: OrderRefund[];
+  dispute: { id: string; status: DisputeStatus } | null;
+};
+
+/**
+ * One uploaded piece of dispute evidence — GET /admin/disputes/{id} `evidence`.
+ * `url` is a short-lived presigned image URL and can be null when signing failed.
+ */
+export type DisputeEvidence = {
+  assetId: string;
+  uploadedByUserId: string;
+  url: string | null;
+  note: string | null;
+  createdAt: string;
+};
+
+/** GET /admin/disputes/{id} — the list row plus offer, internal-note, and evidence detail. */
+export type AdminDisputeDetail = AdminDispute & {
+  offerNote: string | null;
+  offerExpiresAt: string | null;
+  adminNote: string | null;
+  resolvedByUserId: string | null;
+  evidence: DisputeEvidence[];
+};
+
 /** GET /admin/orders/{id}/refund-eligibility — which operator resolutions are valid right now. */
 export type RefundEligibility = {
   availableResolutions: string[];

@@ -14,10 +14,13 @@ import { Switch } from "@/components/ui/Switch";
 import { createCpEmployee, deleteCpEmployee, listCpEmployees, updateCpEmployee } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDate } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { CpEmployee } from "@/types/admin";
 
 export function EmployeesTab({ refreshKey }: { refreshKey: number }) {
+  // UI courtesy only — the Content Pulse write routes enforce contentPulse.manage themselves.
+  const canManage = useAuthStore((s) => s.can("contentPulse.manage"));
   const [employees, setEmployees] = useState<CpEmployee[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,7 +140,11 @@ export function EmployeesTab({ refreshKey }: { refreshKey: number }) {
       header: "Active",
       sortValue: (e) => (e.active ? 1 : 0),
       render: (e) => (
-        <Switch checked={e.active} onChange={(v) => void handleToggleActive(e, v)} />
+        <Switch
+          checked={e.active}
+          disabled={!canManage}
+          onChange={(v) => void handleToggleActive(e, v)}
+        />
       ),
     },
     {
@@ -150,11 +157,12 @@ export function EmployeesTab({ refreshKey }: { refreshKey: number }) {
       key: "actions",
       header: "",
       align: "right",
-      render: (e) => (
-        <Button variant="ghost" size="sm" onClick={() => setDeleting(e)}>
-          Delete
-        </Button>
-      ),
+      render: (e) =>
+        canManage ? (
+          <Button variant="ghost" size="sm" onClick={() => setDeleting(e)}>
+            Delete
+          </Button>
+        ) : null,
     },
   ];
 
@@ -166,11 +174,13 @@ export function EmployeesTab({ refreshKey }: { refreshKey: number }) {
         </Card>
       )}
 
-      <div className="mb-4 flex justify-end">
-        <Button onClick={openAdd}>
-          <UserPlus size={15} aria-hidden /> Add employee
-        </Button>
-      </div>
+      {canManage && (
+        <div className="mb-4 flex justify-end">
+          <Button onClick={openAdd}>
+            <UserPlus size={15} aria-hidden /> Add employee
+          </Button>
+        </div>
+      )}
 
       {employees === null ? (
         <Card className="space-y-3 p-6">
@@ -186,9 +196,11 @@ export function EmployeesTab({ refreshKey }: { refreshKey: number }) {
             title="No employees yet"
             description="Add the teammates who run the social accounts, then attribute posts to them on the Posts tab."
             action={
-              <Button onClick={openAdd}>
-                <UserPlus size={15} aria-hidden /> Add employee
-              </Button>
+              canManage ? (
+                <Button onClick={openAdd}>
+                  <UserPlus size={15} aria-hidden /> Add employee
+                </Button>
+              ) : undefined
             }
           />
         </Card>

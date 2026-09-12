@@ -11,6 +11,7 @@ import { Tabs } from "@/components/ui/Tabs";
 import { listEmailTemplates, previewEmailTemplate, sendTestEmail } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { cn } from "@/lib/cn";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { EmailTemplate, EmailTemplatePreview } from "@/types/admin";
 
@@ -39,6 +40,8 @@ type SendFailure = {
 };
 
 export default function EmailTemplatesPage() {
+  // UI courtesy only — POST /admin/email-templates/:key/test enforces emailTemplates.test.
+  const canSendTest = useAuthStore((s) => s.can("emailTemplates.test"));
   const [templates, setTemplates] = useState<EmailTemplate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -267,13 +270,15 @@ export default function EmailTemplatesPage() {
               title={selected?.label ?? "Preview"}
               description={selected?.trigger}
               actions={
-                <Button
-                  loading={sending}
-                  disabled={!selectedKey}
-                  onClick={() => void handleSendTest()}
-                >
-                  {!sending && <Send size={15} aria-hidden />} Send test to my inbox
-                </Button>
+                canSendTest ? (
+                  <Button
+                    loading={sending}
+                    disabled={!selectedKey}
+                    onClick={() => void handleSendTest()}
+                  >
+                    {!sending && <Send size={15} aria-hidden />} Send test to my inbox
+                  </Button>
+                ) : undefined
               }
             />
             <CardBody className="space-y-4">

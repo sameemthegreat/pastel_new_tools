@@ -21,6 +21,7 @@ import {
 } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDate, formatNumber } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { Discount, DiscountInput } from "@/types/admin";
 
@@ -54,6 +55,8 @@ function toInput(form: FormState): DiscountInput {
 }
 
 export default function DiscountsPage() {
+  // UI courtesy only — the discount write routes enforce discounts.manage themselves.
+  const canManage = useAuthStore((s) => s.can("discounts.manage"));
   const [discounts, setDiscounts] = useState<Discount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -200,14 +203,18 @@ export default function DiscountsPage() {
       align: "right",
       render: (d) => (
         <span className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={() => openEdit(d)}>
-            Edit
-          </Button>
-          {d.isActive && (
-            <Button variant="ghost" size="sm" onClick={() => setDeactivating(d)}>
-              Deactivate
-            </Button>
-          )}
+          {canManage ? (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => openEdit(d)}>
+                Edit
+              </Button>
+              {d.isActive && (
+                <Button variant="ghost" size="sm" onClick={() => setDeactivating(d)}>
+                  Deactivate
+                </Button>
+              )}
+            </>
+          ) : null}
         </span>
       ),
     },
@@ -223,9 +230,11 @@ export default function DiscountsPage() {
             <Button variant="outline" onClick={() => void load()}>
               <RefreshCw size={15} aria-hidden /> Refresh
             </Button>
-            <Button onClick={openCreate}>
-              <Plus size={15} aria-hidden /> New discount
-            </Button>
+            {canManage && (
+              <Button onClick={openCreate}>
+                <Plus size={15} aria-hidden /> New discount
+              </Button>
+            )}
           </>
         }
       />
@@ -249,7 +258,7 @@ export default function DiscountsPage() {
             icon={TicketPercent}
             title="No discount codes yet"
             description="Create the first platform promo code — it becomes redeemable at checkout immediately."
-            action={<Button onClick={openCreate}>New discount</Button>}
+            action={canManage ? <Button onClick={openCreate}>New discount</Button> : undefined}
           />
         </Card>
       ) : (

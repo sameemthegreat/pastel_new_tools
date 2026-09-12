@@ -20,6 +20,7 @@ import {
 } from "@/lib/api/admin";
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { formatCurrency, formatNumber } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { CurationEntry } from "@/types/admin";
 
@@ -59,6 +60,8 @@ function entryPrice(entry: { priceAmount: number | null }): string {
 
 export default function CurationPage() {
   // ── Scope + pinned entries ────────────────────────────────────────────
+  // UI courtesy only — the curation write routes enforce curation.manage themselves.
+  const canManage = useAuthStore((s) => s.can("curation.manage"));
   const [scope, setScope] = useState("home");
   const [serverEntries, setServerEntries] = useState<CurationEntry[] | null>(null);
   const [entries, setEntries] = useState<CurationEntry[] | null>(null);
@@ -423,7 +426,7 @@ export default function CurationPage() {
                         variant="ghost"
                         size="sm"
                         aria-label={`Move ${entry.title} up`}
-                        disabled={index === 0}
+                        disabled={!canManage || index === 0}
                         onClick={() => move(index, -1)}
                       >
                         <ArrowUp size={14} aria-hidden />
@@ -432,7 +435,7 @@ export default function CurationPage() {
                         variant="ghost"
                         size="sm"
                         aria-label={`Move ${entry.title} down`}
-                        disabled={index === entries.length - 1}
+                        disabled={!canManage || index === entries.length - 1}
                         onClick={() => move(index, 1)}
                       >
                         <ArrowDown size={14} aria-hidden />
@@ -441,6 +444,7 @@ export default function CurationPage() {
                         variant="ghost"
                         size="sm"
                         aria-label={`Remove ${entry.title}`}
+                        disabled={!canManage}
                         onClick={() => handleRemoveClick(entry)}
                       >
                         <X size={14} aria-hidden />
@@ -487,7 +491,7 @@ export default function CurationPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              disabled={pinned || atCap}
+                              disabled={!canManage || pinned || atCap}
                               onClick={() => handleAdd(hit)}
                             >
                               {pinned ? "Pinned" : "Add"}
@@ -524,7 +528,12 @@ export default function CurationPage() {
                     <Button variant="outline" size="sm" onClick={handleCancelEdits}>
                       Cancel
                     </Button>
-                    <Button size="sm" loading={saving} onClick={() => void handleSaveOrder()}>
+                    <Button
+                      size="sm"
+                      disabled={!canManage}
+                      loading={saving}
+                      onClick={() => void handleSaveOrder()}
+                    >
                       Save order
                     </Button>
                   </span>
@@ -572,6 +581,7 @@ export default function CurationPage() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      disabled={!canManage}
                       loading={pickRemovingId === pick.id}
                       onClick={() => void handleRemovePick(pick)}
                     >
@@ -603,7 +613,7 @@ export default function CurationPage() {
                   className="w-full sm:w-96"
                 />
                 <Button
-                  disabled={!pickInput.trim()}
+                  disabled={!canManage || !pickInput.trim()}
                   loading={pickBusy}
                   onClick={() => void handleMakePick()}
                 >
