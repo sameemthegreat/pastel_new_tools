@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Link2,
   Mail,
+  Palette,
   Pin,
   Receipt,
   Scale,
@@ -72,6 +73,9 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "System",
-    items: [{ label: "App Versions", href: "/app-versions", icon: Smartphone }],
+    items: [
+      { label: "App Versions", href: "/app-versions", icon: Smartphone },
+      { label: "Theme", href: "/theme", icon: Palette },
+    ],
   },
 ];
