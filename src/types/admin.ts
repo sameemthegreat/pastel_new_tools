@@ -25,6 +25,13 @@ export type AdminUser = {
   userType: string;
   accountStatus: AccountStatus;
   restrictedAt: string | null;
+  /**
+   * Admin-granted "Founder Seller" badge — shows on the seller's shop profile in place of the
+   * New/Active Seller pill. Toggled via `POST /admin/users/{id}/founders-badge`; seller accounts only.
+   */
+  foundersBadge: boolean;
+  /** When the Founder badge was last granted; null while it is off. */
+  foundersBadgeGrantedAt: string | null;
 };
 
 export type UserRestrictionEntry = {

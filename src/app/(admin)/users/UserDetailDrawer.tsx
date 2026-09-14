@@ -1,15 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Ban, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Ban, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Drawer } from "@/components/ui/Drawer";
 import { Modal } from "@/components/ui/Modal";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { Switch } from "@/components/ui/Switch";
 import { Textarea } from "@/components/ui/Textarea";
-import { banUser, getUser, restrictUser, unrestrictUser } from "@/lib/api/admin";
+import {
+  banUser,
+  getUser,
+  restrictUser,
+  setFoundersBadge,
+  unrestrictUser,
+} from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
@@ -29,18 +36,36 @@ function statusLabel(status: AccountStatus): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-/** "restrict" → warning, "unrestrict" → success, "ban" → error; anything else neutral. */
+/**
+ * "restrict" → warning, "unrestrict" → success, "ban" → error, a Founder badge grant → brand;
+ * anything else neutral.
+ */
 function historyTone(action: string): BadgeTone {
   const a = action.toLowerCase();
+  if (a === "grant-founders-badge") return "brand";
+  if (a === "revoke-founders-badge") return "neutral";
   if (a.includes("unrestrict")) return "success";
   if (a.includes("ban")) return "error";
   if (a.includes("restrict")) return "warning";
   return "neutral";
 }
 
+/** The Founder badge rows read as sentences; everything else is the action token humanized. */
+const HISTORY_LABELS: Record<string, string> = {
+  "grant-founders-badge": "Founder badge granted",
+  "revoke-founders-badge": "Founder badge revoked",
+};
+
 function historyLabel(action: string): string {
-  const label = action.replace(/_/g, " ").toLowerCase();
+  const known = HISTORY_LABELS[action.toLowerCase()];
+  if (known) return known;
+  const label = action.replace(/[_-]/g, " ").toLowerCase();
   return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/** 'seller' and 'provider' are the same class of account — only they can hold the Founder badge. */
+function isSellerType(userType: string): boolean {
+  return userType === "seller" || userType === "provider";
 }
 
 export function UserDetailDrawer({
@@ -66,6 +91,7 @@ export function UserDetailDrawer({
   const [submitting, setSubmitting] = useState(false);
 
   const [unrestrictOpen, setUnrestrictOpen] = useState(false);
+  const [founderSaving, setFounderSaving] = useState(false);
 
   // Opening a different user (or closing the drawer) clears the previous
   // detail and any in-progress moderation form. Resetting during render
@@ -82,6 +108,7 @@ export function UserDetailDrawer({
     setReasonError(null);
     setActionError(null);
     setUnrestrictOpen(false);
+    setFounderSaving(false);
   }
 
   // Fetch the detail whenever a user is opened (or a refetch is requested).
@@ -181,7 +208,38 @@ export function UserDetailDrawer({
     }
   }
 
+  // Grant/revoke the Founder badge. The switch flips optimistically and is put back if the
+  // backend refuses (e.g. 409 for a non-seller); on success the detail is refetched so the new
+  // history row and grant date show, and the list is told to reload its row.
+  async function handleFounderToggle(next: boolean) {
+    if (!detail || founderSaving) return;
+    const previous = detail;
+    setFounderSaving(true);
+    setDetail({ ...detail, foundersBadge: next });
+    try {
+      await setFoundersBadge(detail.id, next);
+      toast({
+        title: next ? "Founder badge granted" : "Founder badge removed",
+        description: detail.email,
+        tone: "success",
+      });
+      refetchDetail();
+      onChanged();
+    } catch (err) {
+      setDetail(previous);
+      toast({
+        title: "Founder badge update failed",
+        description: err instanceof ApiError ? err.message : detail.email,
+        tone: "error",
+      });
+    } finally {
+      setFounderSaving(false);
+    }
+  }
+
   const loading = userId !== null && detail === null && loadError === null;
+  // The badge can only be GRANTED to a seller; a badge left on a demoted account can still be revoked.
+  const canHoldFounder = detail ? isSellerType(detail.userType) || detail.foundersBadge : false;
 
   return (
     <Drawer
@@ -228,6 +286,11 @@ export function UserDetailDrawer({
               <Badge tone={STATUS_TONES[detail.accountStatus]} dot>
                 {statusLabel(detail.accountStatus)}
               </Badge>
+              {detail.foundersBadge && (
+                <Badge tone="brand">
+                  <Sparkles size={12} aria-hidden /> Founder Seller
+                </Badge>
+              )}
             </div>
             <p className="mt-1 font-mono text-xs text-ink-muted">{detail.id}</p>
           </div>
@@ -245,8 +308,47 @@ export function UserDetailDrawer({
                   {detail.restrictedAt ? formatDateTime(detail.restrictedAt) : "—"}
                 </dd>
               </div>
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-ink-muted">Founder badge</dt>
+                <dd className="text-ink">
+                  {detail.foundersBadge
+                    ? detail.foundersBadgeGrantedAt
+                      ? `Granted ${formatDateTime(detail.foundersBadgeGrantedAt)}`
+                      : "Granted"
+                    : "—"}
+                </dd>
+              </div>
             </dl>
           </div>
+
+          {/* Seller badge — the admin-granted Founder Seller badge (sellers only) */}
+          {canHoldFounder && (
+            <section className="rounded-2xl border border-hairline bg-surface p-4 shadow-xs">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h4 className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                    <Sparkles size={15} className="text-brand-500" aria-hidden /> Founder badge
+                  </h4>
+                  <p className="mt-0.5 text-xs text-ink-muted">
+                    Shows on top of the New/Active Seller badges on their shop profile and on the
+                    Top Sellers cards. Recorded in the restriction history with your operator
+                    identity.
+                  </p>
+                  {!canModerate && (
+                    <p className="mt-2 text-xs text-ink-muted">
+                      Your operator role can see the badge but not grant or revoke it.
+                    </p>
+                  )}
+                </div>
+                <Switch
+                  checked={detail.foundersBadge}
+                  onChange={(next) => void handleFounderToggle(next)}
+                  disabled={!canModerate || founderSaving}
+                  label={detail.foundersBadge ? "Granted" : "Off"}
+                />
+              </div>
+            </section>
+          )}
 
           {/* Restriction history */}
           <section>

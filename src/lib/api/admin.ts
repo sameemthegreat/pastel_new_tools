@@ -123,6 +123,8 @@ export function listUsers(params: {
   status?: string;
   type?: string;
   search?: string;
+  /** `"true"` → Founder Sellers only, `"false"` → accounts without the badge. */
+  foundersBadge?: string;
   cursor?: string;
   perPage?: string;
 }): Promise<Page<AdminUser>> {
@@ -146,6 +148,17 @@ export function unrestrictUser(id: string, reason?: string): Promise<AdminUser> 
 
 export function banUser(id: string, reason: string): Promise<AdminUser> {
   return adminFetch<AdminUser>(`/users/${id}/ban`, { method: "POST", body: { reason } });
+}
+
+/**
+ * Grant (`true`) or revoke (`false`) the "Founder Seller" badge. Seller accounts only — the backend
+ * answers 409 for a customer. Idempotent: re-sending the current value changes nothing.
+ */
+export function setFoundersBadge(id: string, foundersBadge: boolean): Promise<AdminUser> {
+  return adminFetch<AdminUser>(`/users/${id}/founders-badge`, {
+    method: "POST",
+    body: { foundersBadge },
+  });
 }
 
 // ── Seller applications (Requests) ────────────────────────────────────────
