@@ -7,17 +7,35 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
-import type { MigrationStage, TriggerRunInput } from "@/types/migration";
+import type {
+  BackupFile,
+  MigrationSource,
+  MigrationStage,
+  TriggerRunInput,
+} from "@/types/migration";
 
 /** Stages that never write get no dry-run toggle (it would be meaningless). */
 const READ_ONLY = new Set(["validate", "reconcile"]);
+
+function formatBytes(n: number): string {
+  const units = ["B", "KB", "MB", "GB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(0)}${units[i]}`;
+}
 
 export function RunCard({
   stage,
   disabled,
   canRun,
   onRun,
+  backups = [],
 }: {
   stage: MigrationStage;
   /** A run is already in progress — the single-flight slot is taken. */
@@ -25,17 +43,23 @@ export function RunCard({
   /** The operator holds migration.run (superAdmin). */
   canRun: boolean;
   onRun: (input: TriggerRunInput) => void;
+  /** Available backup files — only used by the restore card (params includes "backupFile"). */
+  backups?: BackupFile[];
 }) {
   const [seller, setSeller] = useState("");
   const [force, setForce] = useState(false);
   const [limit, setLimit] = useState("");
+  const [source, setSource] = useState<MigrationSource>("live");
+  const [backupFile, setBackupFile] = useState("");
   const [dryRun, setDryRun] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  const wantsBackupFile = stage.params.includes("backupFile");
   const writes = !READ_ONLY.has(stage.key);
   const confirmed = !stage.destructive || confirmText === stage.confirmPhrase;
-  const blocked = disabled || !canRun || !confirmed;
+  const backupChosen = !wantsBackupFile || !!backupFile;
+  const blocked = disabled || !canRun || !confirmed || !backupChosen;
 
   function build(): TriggerRunInput {
     return {
@@ -43,6 +67,8 @@ export function RunCard({
       seller: stage.params.includes("seller") && seller.trim() ? seller.trim() : undefined,
       force: stage.params.includes("force") ? force : undefined,
       limit: stage.params.includes("limit") && limit.trim() ? Number(limit) : undefined,
+      source: stage.params.includes("source") ? source : undefined,
+      backupFile: wantsBackupFile ? backupFile : undefined,
       dryRun: writes ? dryRun : undefined,
       confirm: stage.destructive ? stage.confirmPhrase ?? undefined : undefined,
     };
@@ -57,6 +83,17 @@ export function RunCard({
     onRun(build());
   }
 
+  const confirmMessage =
+    stage.key === "restore"
+      ? `This RESTORES the database from "${backupFile}", overwriting current data.` +
+        (dryRun
+          ? " Dry run is on, so a safety backup is taken and the restore is skipped."
+          : " A safety backup of the current database is taken first, then the restore is applied.")
+      : `This TRUNCATES every migration-owned table (incl. migration_map).` +
+        (dryRun
+          ? " Dry run is on, so it rolls back after the backup."
+          : " A full backup is taken first, then the truncation is committed.");
+
   return (
     <Card className={stage.destructive ? "border-danger/30" : undefined}>
       <CardHeader
@@ -70,6 +107,45 @@ export function RunCard({
         }
       />
       <CardBody className="space-y-3">
+        {stage.params.includes("source") && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-ink-secondary">Source</label>
+            <Select
+              value={source}
+              onChange={(v) => setSource(v as MigrationSource)}
+              options={[
+                { value: "live", label: "Live Sharetribe" },
+                { value: "dev", label: "Dev Sharetribe" },
+              ]}
+              className="w-full sm:w-56"
+            />
+          </div>
+        )}
+
+        {wantsBackupFile && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-ink-secondary">Backup to restore</label>
+            {backups.length === 0 ? (
+              <p className="rounded-lg border border-hairline bg-tile/50 px-3 py-2 text-xs text-ink-muted">
+                No backups yet — run <span className="font-medium">Backup database</span> first.
+              </p>
+            ) : (
+              <Select
+                value={backupFile}
+                onChange={setBackupFile}
+                options={[
+                  { value: "", label: "Select a backup…" },
+                  ...backups.map((b) => ({
+                    value: b.name,
+                    label: `${b.name} · ${formatBytes(b.sizeBytes)}`,
+                  })),
+                ]}
+                className="w-full"
+              />
+            )}
+          </div>
+        )}
+
         {stage.params.includes("seller") && (
           <Input
             aria-label="Seller source id"
@@ -101,7 +177,7 @@ export function RunCard({
             <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-danger">
               <AlertTriangle size={14} aria-hidden /> Type{" "}
               <span className="font-mono font-semibold">{stage.confirmPhrase}</span> to enable.
-              A full pg_dump backup is taken first.
+              A safety backup is taken first.
             </p>
             <Input
               aria-label={`Type ${stage.confirmPhrase} to confirm`}
@@ -119,7 +195,7 @@ export function RunCard({
             </span>
           ) : (
             <span className="text-xs text-ink-muted">
-              {dryRun && writes ? "Dry run — nothing is committed" : " "}
+              {dryRun && writes ? "Dry run — nothing is committed" : " "}
             </span>
           )}
           <Button
@@ -144,10 +220,7 @@ export function RunCard({
             setConfirmText("");
           }}
           title={`Run "${stage.label}"?`}
-          message={
-            `This TRUNCATES every migration-owned table (incl. migration_map)` +
-            `${dryRun ? ", but Dry run is on so it will roll back after the backup." : ". A full pg_dump backup is taken first, then the truncation is committed."}`
-          }
+          message={confirmMessage}
           confirmLabel="Run destructive stage"
           tone="danger"
         />

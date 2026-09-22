@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
+  Archive,
   Database,
   DatabaseZap,
   History,
@@ -20,6 +21,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import {
   getMigrationMapStats,
   getReconcile,
+  listBackups,
   listRuns,
   listStages,
   triggerRun,
@@ -29,6 +31,7 @@ import { formatDateTime, timeAgo } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type {
+  BackupFile,
   MigrationMapStat,
   MigrationRun,
   MigrationRunStatus,
@@ -41,6 +44,17 @@ import { RunCard } from "./RunCard";
 
 const TERMINAL: MigrationRunStatus[] = ["succeeded", "failed", "interrupted"];
 
+function formatBytes(n: number): string {
+  const units = ["B", "KB", "MB", "GB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(0)}${units[i]}`;
+}
+
 export default function MigrationPage() {
   const canRead = useAuthStore((s) => s.can("migration.read"));
   const canRun = useAuthStore((s) => s.can("migration.run"));
@@ -50,6 +64,7 @@ export default function MigrationPage() {
   const [runs, setRuns] = useState<MigrationRun[] | null>(null);
   const [reconcile, setReconcile] = useState<ReconcileRow[] | null>(null);
   const [mapStats, setMapStats] = useState<MigrationMapStat[] | null>(null);
+  const [backups, setBackups] = useState<BackupFile[] | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,15 +80,16 @@ export default function MigrationPage() {
   const loadRuns = useCallback(async () => setRuns(await listRuns({ limit: 25 })), []);
   const loadReconcile = useCallback(async () => setReconcile(await getReconcile()), []);
   const loadMapStats = useCallback(async () => setMapStats(await getMigrationMapStats()), []);
+  const loadBackups = useCallback(async () => setBackups(await listBackups()), []);
 
   const loadAll = useCallback(async () => {
     try {
-      await Promise.all([loadStages(), loadRuns(), loadReconcile(), loadMapStats()]);
+      await Promise.all([loadStages(), loadRuns(), loadReconcile(), loadMapStats(), loadBackups()]);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not reach the migration service.");
     }
-  }, [loadStages, loadRuns, loadReconcile, loadMapStats]);
+  }, [loadStages, loadRuns, loadReconcile, loadMapStats, loadBackups]);
 
   useEffect(() => {
     if (!canRead) return;
@@ -104,9 +120,10 @@ export default function MigrationPage() {
         void loadRuns();
         void loadReconcile();
         void loadMapStats();
+        void loadBackups();
       }
     },
-    [loadStages, loadRuns, loadReconcile, loadMapStats]
+    [loadStages, loadRuns, loadReconcile, loadMapStats, loadBackups]
   );
 
   if (!canRead) {
@@ -231,6 +248,7 @@ export default function MigrationPage() {
               disabled={!!activeRunId}
               canRun={canRun}
               onRun={handleRun}
+              backups={backups ?? []}
             />
           ))}
         </div>
@@ -278,6 +296,37 @@ export default function MigrationPage() {
           </CardBody>
         </Card>
       </div>
+
+      {/* Backups */}
+      <Card className="mt-5">
+        <CardHeader
+          title="Backups"
+          description="pg_dump snapshots on the local volume (also copied to Spaces). Restore one from the Restore card above."
+        />
+        <CardBody>
+          {backups === null ? (
+            <Skeleton className="h-24 w-full" />
+          ) : backups.length === 0 ? (
+            <EmptyState
+              icon={Archive}
+              title="No backups yet"
+              description="Run the Backup database stage to create a timestamped snapshot."
+            />
+          ) : (
+            <ul className="divide-y divide-hairline">
+              {backups.map((b) => (
+                <li key={b.name} className="flex items-center justify-between gap-4 py-2 text-sm">
+                  <span className="truncate font-mono text-ink">{b.name}</span>
+                  <span className="flex shrink-0 items-center gap-3 text-ink-muted">
+                    <span>{formatBytes(b.sizeBytes)}</span>
+                    <span>{formatDateTime(b.modifiedAt)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardBody>
+      </Card>
 
       {/* Run history */}
       <Card className="mt-5 p-0">
