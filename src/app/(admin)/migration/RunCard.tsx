@@ -49,7 +49,7 @@ export function RunCard({
   const [seller, setSeller] = useState("");
   const [force, setForce] = useState(false);
   const [limit, setLimit] = useState("");
-  const [source, setSource] = useState<MigrationSource>("live");
+  const [source, setSource] = useState<MigrationSource>("dev");
   const [backupFile, setBackupFile] = useState("");
   const [dryRun, setDryRun] = useState(false);
   const [confirmText, setConfirmText] = useState("");
@@ -114,8 +114,8 @@ export function RunCard({
               value={source}
               onChange={(v) => setSource(v as MigrationSource)}
               options={[
-                { value: "live", label: "Live Sharetribe" },
                 { value: "dev", label: "Dev Sharetribe" },
+                { value: "live", label: "Live Sharetribe" },
               ]}
               className="w-full sm:w-56"
             />
