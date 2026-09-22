@@ -47,7 +47,9 @@ export type AdminCapability =
   | "emailTemplates.read"
   | "emailTemplates.test"
   | "team.read"
-  | "team.manage";
+  | "team.manage"
+  | "migration.read"
+  | "migration.run";
 
 /** Human-readable labels for `AdminRole`, for chrome like the sidebar user card. */
 export const ADMIN_ROLE_LABELS: Record<AdminRole, string> = {
