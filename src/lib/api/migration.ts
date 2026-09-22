@@ -2,6 +2,7 @@ import { ApiError, envelopeFetch, type RequestOptions } from "@/lib/api/client";
 import { refreshAccessToken } from "@/lib/api/auth";
 import { useAuthStore } from "@/stores/authStore";
 import type {
+  BackupFile,
   MigrationLogsResponse,
   MigrationMapStat,
   MigrationRun,
@@ -101,4 +102,8 @@ export function getReconcile(): Promise<ReconcileRow[]> {
 
 export function getMigrationMapStats(): Promise<MigrationMapStat[]> {
   return migrationFetch<MigrationMapStat[]>("/migration-map/stats");
+}
+
+export function listBackups(): Promise<BackupFile[]> {
+  return migrationFetch<BackupFile[]>("/backups");
 }
