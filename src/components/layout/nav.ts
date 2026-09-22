@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  DatabaseZap,
   Inbox,
   LayoutDashboard,
   Link2,
@@ -102,6 +103,12 @@ export const NAV_GROUPS: NavGroup[] = [
         href: "/app-versions",
         icon: Smartphone,
         capability: "appVersions.read",
+      },
+      {
+        label: "Migration",
+        href: "/migration",
+        icon: DatabaseZap,
+        capability: "migration.read",
       },
       { label: "Theme", href: "/theme", icon: Palette },
     ],
