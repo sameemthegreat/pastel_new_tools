@@ -4,7 +4,7 @@
  * Run rows come straight from Postgres columns, hence snake_case.
  */
 
-export type MigrationStageParam = "seller" | "force" | "limit";
+export type MigrationStageParam = "seller" | "force" | "limit" | "source" | "backupFile";
 
 export type MigrationStage = {
   key: string;
@@ -54,12 +54,19 @@ export type ReconcileRow = { label: string; count: number | null };
 
 export type MigrationMapStat = { source_type: string; count: number };
 
+export type BackupFile = { name: string; sizeBytes: number; modifiedAt: string };
+
+/** Which source `extract` pulls from. */
+export type MigrationSource = "live" | "dev";
+
 /** Body for POST /runs. */
 export type TriggerRunInput = {
   stage: string;
   seller?: string;
   force?: boolean;
   limit?: number;
+  source?: MigrationSource;
+  backupFile?: string;
   dryRun?: boolean;
   confirm?: string;
 };
