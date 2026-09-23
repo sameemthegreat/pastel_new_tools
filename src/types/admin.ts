@@ -19,12 +19,20 @@ export type Page<T> = { items: T[]; meta: PageMeta };
 
 export type AccountStatus = "active" | "restricted" | "banned" | "deleted";
 
+/**
+ * Which backend a row came from during dual-run migration. `primary` = the console's own backend
+ * (NEXT_PUBLIC_API_URL); `droplet` = the sibling backend aggregated via the cross-backend bridge.
+ * Undefined behaves as `primary`. Actions (approve, ban, …) must route back to the row's own backend.
+ */
+export type BackendId = "primary" | "droplet";
+
 export type AdminUser = {
   id: string;
   email: string;
   userType: string;
   accountStatus: AccountStatus;
   restrictedAt: string | null;
+  _backend?: BackendId;
 };
 
 export type UserRestrictionEntry = {
@@ -93,6 +101,7 @@ export type SellerApplication = {
   submittedAt: string;
   createdAt: string;
   updatedAt: string;
+  _backend?: BackendId;
 };
 
 export type SellerApplicationNote = {

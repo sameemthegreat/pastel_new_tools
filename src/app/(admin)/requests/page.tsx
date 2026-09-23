@@ -31,12 +31,16 @@ import { ApiError } from "@/lib/api/client";
 import { formatDate, formatNumber } from "@/lib/format";
 import { toast } from "@/stores/uiStore";
 import type {
+  BackendId,
   DeletionRequest,
   PageMeta,
   SellerApplication,
   SellerApplicationStats,
 } from "@/types/admin";
 import { ApplicationStatusBadge, ApplicationDrawer, crmStatusLabel } from "./ApplicationDrawer";
+
+/** Dual-run migration: show the source-backend column and tag rows when aggregating two backends. */
+const DUAL_BACKEND = process.env.NEXT_PUBLIC_DUAL_BACKEND === "true";
 
 type TabKey =
   | "all"
@@ -91,7 +95,7 @@ export default function RequestsPage() {
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [open, setOpen] = useState<{ id: string; backend?: BackendId } | null>(null);
 
   // "Mark completed" flow for a pending deletion request.
   const [completing, setCompleting] = useState<DeletionRequest | null>(null);
@@ -309,6 +313,20 @@ export default function RequestsPage() {
       sortValue: (a) => a.submittedAt,
       render: (a) => <span className="text-ink-secondary">{formatDate(a.submittedAt)}</span>,
     },
+    ...(DUAL_BACKEND
+      ? [
+          {
+            key: "backend",
+            header: "Source",
+            width: "w-28",
+            render: (a: SellerApplication) => (
+              <Badge tone={a._backend === "droplet" ? "brand" : "neutral"}>
+                {a._backend === "droplet" ? "Droplet" : "Primary"}
+              </Badge>
+            ),
+          } satisfies Column<SellerApplication>,
+        ]
+      : []),
   ];
 
   const deletionColumns: Column<DeletionRequest>[] = [
@@ -448,8 +466,8 @@ export default function RequestsPage() {
             <DataTable
               rows={apps}
               columns={applicationColumns}
-              rowKey={(a) => a.id}
-              onRowClick={(a) => setOpenId(a.id)}
+              rowKey={(a) => `${a._backend ?? "primary"}:${a.id}`}
+              onRowClick={(a) => setOpen({ id: a.id, backend: a._backend })}
               pageSize={200}
               emptyTitle="No applications to show"
               footer={
@@ -548,8 +566,9 @@ export default function RequestsPage() {
       </Modal>
 
       <ApplicationDrawer
-        applicationId={openId}
-        onClose={() => setOpenId(null)}
+        applicationId={open?.id ?? null}
+        backend={open?.backend}
+        onClose={() => setOpen(null)}
         onChanged={() => {
           void loadStats();
           if (tab !== "deletion") void loadApplications();
