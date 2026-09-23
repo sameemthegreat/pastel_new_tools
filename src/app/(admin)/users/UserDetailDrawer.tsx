@@ -21,7 +21,7 @@ import { ApiError } from "@/lib/api/client";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
-import type { AccountStatus, AdminUserDetail } from "@/types/admin";
+import type { AccountStatus, AdminUserDetail, BackendId } from "@/types/admin";
 
 type ModAction = "restrict" | "ban";
 
@@ -70,10 +70,13 @@ function isSellerType(userType: string): boolean {
 
 export function UserDetailDrawer({
   userId,
+  backend,
   onClose,
   onChanged,
 }: {
   userId: string | null;
+  /** Which backend this user lives in — every read/action routes back to it. */
+  backend?: BackendId;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -117,7 +120,7 @@ export function UserDetailDrawer({
     let cancelled = false;
     void (async () => {
       try {
-        const fetched = await getUser(userId);
+        const fetched = await getUser(userId, backend);
         if (!cancelled) setDetail(fetched);
       } catch (err) {
         if (!cancelled) {
@@ -130,7 +133,7 @@ export function UserDetailDrawer({
     return () => {
       cancelled = true;
     };
-  }, [userId, fetchKey]);
+  }, [userId, backend, fetchKey]);
 
   // Starts a refetch of the open user; called from event handlers, where the
   // synchronous error-clear is fine.
@@ -170,10 +173,10 @@ export function UserDetailDrawer({
     setSubmitting(true);
     try {
       if (action === "ban") {
-        await banUser(detail.id, trimmed);
+        await banUser(detail.id, trimmed, backend);
         toast({ title: "Account banned", description: detail.email, tone: "success" });
       } else {
-        await restrictUser(detail.id, trimmed);
+        await restrictUser(detail.id, trimmed, backend);
         toast({ title: "Account restricted", description: detail.email, tone: "success" });
       }
       setAction(null);
@@ -195,7 +198,7 @@ export function UserDetailDrawer({
     if (!detail) return;
     setUnrestrictOpen(false);
     try {
-      await unrestrictUser(detail.id);
+      await unrestrictUser(detail.id, undefined, backend);
       toast({ title: "Restriction lifted", description: detail.email, tone: "success" });
       refetchDetail();
       onChanged();
@@ -217,7 +220,7 @@ export function UserDetailDrawer({
     setFounderSaving(true);
     setDetail({ ...detail, foundersBadge: next });
     try {
-      await setFoundersBadge(detail.id, next);
+      await setFoundersBadge(detail.id, next, backend);
       toast({
         title: next ? "Founder badge granted" : "Founder badge removed",
         description: detail.email,

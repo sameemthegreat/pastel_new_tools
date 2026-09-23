@@ -8,6 +8,7 @@ import type {
   AdminOrderDetail,
   AdminUser,
   AnalyticsDay,
+  BackendId,
   BundleAdoption,
   CpEmployee,
   CpEmployeeAnalytics,
@@ -57,6 +58,29 @@ import type { AdminRole } from "@/types/auth";
  * Both end-of-session paths go through the layout, which redirects off `status`.
  */
 
+/**
+ * Dual-run migration: the Users and Seller-application lists ALSO pull from the sibling (droplet)
+ * backend and tag each row with its source; row-level actions (approve, ban, …) route back to the
+ * row's own backend via `?__backend=droplet`, which the `/api/admin` proxy honours server-side.
+ *
+ * Enablement is SERVER-side only (the proxy needs DROPLET_API_URL + DROPLET_CROSS_BACKEND_SECRET).
+ * We can't read those from the browser, and a NEXT_PUBLIC flag would be baked in at BUILD time (a
+ * footgun — flipping it needs a rebuild), so instead we always ATTEMPT the droplet on the first page
+ * and treat any failure (proxy 501 when unconfigured, or the droplet being down) as "single-backend".
+ * The one wasted request per list load on a non-dual deployment is a fair price for zero build coupling.
+ */
+
+/** Append the proxy's backend selector to a path (no-op for the primary backend). */
+function withBackend(path: string, backend?: BackendId): string {
+  if (backend !== "droplet") return path;
+  return `${path}${path.includes("?") ? "&" : "?"}__backend=droplet`;
+}
+
+/** Stamp every row with its source backend so the UI can tag it and route actions back to it. */
+const tagBackend =
+  (backend: BackendId) =>
+  <T extends object>(row: T): T => ({ ...row, _backend: backend });
+
 let refreshInFlight: Promise<string> | null = null;
 
 /** One shared refresh so ten parallel 401s rotate the cookie once, not ten times. */
@@ -78,18 +102,20 @@ function refreshOnce(): Promise<string> {
 
 async function request<T>(
   path: string,
-  options: Omit<RequestOptions, "accessToken"> = {}
+  options: Omit<RequestOptions, "accessToken"> = {},
+  backend?: BackendId
 ): Promise<{ value: T; meta: Record<string, unknown> }> {
   const token = useAuthStore.getState().accessToken;
+  const url = `/api/admin${withBackend(path, backend)}`;
   try {
-    return await envelopeFetch<T>(`/api/admin${path}`, {
+    return await envelopeFetch<T>(url, {
       ...options,
       accessToken: token ?? undefined,
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       const fresh = await refreshOnce();
-      return envelopeFetch<T>(`/api/admin${path}`, { ...options, accessToken: fresh });
+      return envelopeFetch<T>(url, { ...options, accessToken: fresh });
     }
     if (error instanceof ApiError && error.status === 403) {
       // Revoked → session ends and the layout redirects; otherwise it was a genuine business rule.
@@ -101,25 +127,30 @@ async function request<T>(
 
 async function adminFetch<T>(
   path: string,
-  options: Omit<RequestOptions, "accessToken"> = {}
+  options: Omit<RequestOptions, "accessToken"> = {},
+  backend?: BackendId
 ): Promise<T> {
-  const { value } = await request<T>(path, options);
+  const { value } = await request<T>(path, options, backend);
   return value;
 }
 
-async function adminFetchPage<T>(path: string, params: Record<string, string | undefined>) {
+async function adminFetchPage<T>(
+  path: string,
+  params: Record<string, string | undefined>,
+  backend?: BackendId
+) {
   const query = new URLSearchParams();
   for (const [key, val] of Object.entries(params)) {
     if (val !== undefined && val !== "") query.set(key, val);
   }
   const qs = query.toString();
-  const { value, meta } = await request<T[]>(`${path}${qs ? `?${qs}` : ""}`);
+  const { value, meta } = await request<T[]>(`${path}${qs ? `?${qs}` : ""}`, {}, backend);
   return { items: value, meta: meta as unknown as PageMeta } satisfies Page<T>;
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────
 
-export function listUsers(params: {
+export async function listUsers(params: {
   status?: string;
   type?: string;
   search?: string;
@@ -128,104 +159,165 @@ export function listUsers(params: {
   cursor?: string;
   perPage?: string;
 }): Promise<Page<AdminUser>> {
-  return adminFetchPage<AdminUser>("/users", params);
+  const primary = await adminFetchPage<AdminUser>("/users", params);
+  const items = primary.items.map(tagBackend("primary"));
+  // Only the first page fans out to the droplet (later pages follow the primary cursor); droplet
+  // rows are prepended so newly-migrated accounts surface at the top. Best-effort: a droplet that's
+  // down or unconfigured (proxy 501) just leaves the primary list intact — logged for debugging.
+  if (params.cursor) return { ...primary, items };
+  try {
+    const droplet = await adminFetchPage<AdminUser>(
+      "/users",
+      { ...params, perPage: params.perPage ?? "100" },
+      "droplet"
+    );
+    return { ...primary, items: [...droplet.items.map(tagBackend("droplet")), ...items] };
+  } catch (err) {
+    console.warn("[admin] droplet users fan-out skipped:", err instanceof Error ? err.message : err);
+    return { ...primary, items };
+  }
 }
 
-export function getUser(id: string): Promise<AdminUserDetail> {
-  return adminFetch<AdminUserDetail>(`/users/${id}`);
+export function getUser(id: string, backend?: BackendId): Promise<AdminUserDetail> {
+  return adminFetch<AdminUserDetail>(`/users/${id}`, {}, backend);
 }
 
-export function restrictUser(id: string, reason: string): Promise<AdminUser> {
-  return adminFetch<AdminUser>(`/users/${id}/restrict`, { method: "POST", body: { reason } });
+export function restrictUser(id: string, reason: string, backend?: BackendId): Promise<AdminUser> {
+  return adminFetch<AdminUser>(`/users/${id}/restrict`, { method: "POST", body: { reason } }, backend);
 }
 
-export function unrestrictUser(id: string, reason?: string): Promise<AdminUser> {
-  return adminFetch<AdminUser>(`/users/${id}/unrestrict`, {
-    method: "POST",
-    body: reason ? { reason } : {},
-  });
+export function unrestrictUser(id: string, reason?: string, backend?: BackendId): Promise<AdminUser> {
+  return adminFetch<AdminUser>(
+    `/users/${id}/unrestrict`,
+    { method: "POST", body: reason ? { reason } : {} },
+    backend
+  );
 }
 
-export function banUser(id: string, reason: string): Promise<AdminUser> {
-  return adminFetch<AdminUser>(`/users/${id}/ban`, { method: "POST", body: { reason } });
+export function banUser(id: string, reason: string, backend?: BackendId): Promise<AdminUser> {
+  return adminFetch<AdminUser>(`/users/${id}/ban`, { method: "POST", body: { reason } }, backend);
 }
 
 /**
  * Grant (`true`) or revoke (`false`) the "Founder Seller" badge. Seller accounts only — the backend
  * answers 409 for a customer. Idempotent: re-sending the current value changes nothing.
  */
-export function setFoundersBadge(id: string, foundersBadge: boolean): Promise<AdminUser> {
-  return adminFetch<AdminUser>(`/users/${id}/founders-badge`, {
-    method: "POST",
-    body: { foundersBadge },
-  });
+export function setFoundersBadge(
+  id: string,
+  foundersBadge: boolean,
+  backend?: BackendId
+): Promise<AdminUser> {
+  return adminFetch<AdminUser>(
+    `/users/${id}/founders-badge`,
+    { method: "POST", body: { foundersBadge } },
+    backend
+  );
 }
 
 // ── Seller applications (Requests) ────────────────────────────────────────
 
-export function listApplications(params: {
+export async function listApplications(params: {
   status?: string;
   crmStatus?: string;
   cursor?: string;
   perPage?: string;
 }): Promise<Page<SellerApplication>> {
-  return adminFetchPage<SellerApplication>("/seller-applications", params);
+  const primary = await adminFetchPage<SellerApplication>("/seller-applications", params);
+  const items = primary.items.map(tagBackend("primary"));
+  // First page also pulls the droplet's requests (prepended so new ones are seen first); later pages
+  // follow the primary cursor. Best-effort — a missing/unconfigured droplet leaves the list intact,
+  // logged so a misconfigured bridge is visible in the console instead of silently empty.
+  if (params.cursor) return { ...primary, items };
+  try {
+    const droplet = await adminFetchPage<SellerApplication>(
+      "/seller-applications",
+      { ...params, perPage: params.perPage ?? "100" },
+      "droplet"
+    );
+    return { ...primary, items: [...droplet.items.map(tagBackend("droplet")), ...items] };
+  } catch (err) {
+    console.warn(
+      "[admin] droplet seller-applications fan-out skipped:",
+      err instanceof Error ? err.message : err
+    );
+    return { ...primary, items };
+  }
 }
 
 export function getApplicationStats(): Promise<SellerApplicationStats> {
   return adminFetch<SellerApplicationStats>("/seller-applications/stats");
 }
 
-export function getApplication(id: string): Promise<SellerApplicationDetail> {
-  return adminFetch<SellerApplicationDetail>(`/seller-applications/${id}`);
+export function getApplication(id: string, backend?: BackendId): Promise<SellerApplicationDetail> {
+  return adminFetch<SellerApplicationDetail>(`/seller-applications/${id}`, {}, backend);
 }
 
-export function approveApplication(id: string, note?: string): Promise<SellerApplication> {
-  return adminFetch<SellerApplication>(`/seller-applications/${id}/approve`, {
-    method: "POST",
-    body: note ? { note } : {},
-  });
+export function approveApplication(
+  id: string,
+  note?: string,
+  backend?: BackendId
+): Promise<SellerApplication> {
+  return adminFetch<SellerApplication>(
+    `/seller-applications/${id}/approve`,
+    { method: "POST", body: note ? { note } : {} },
+    backend
+  );
 }
 
 export function rejectApplication(
   id: string,
-  input: { note?: string; reason?: string; sendEmail?: boolean }
+  input: { note?: string; reason?: string; sendEmail?: boolean },
+  backend?: BackendId
 ): Promise<SellerApplication> {
-  return adminFetch<SellerApplication>(`/seller-applications/${id}/reject`, {
-    method: "POST",
-    body: input,
-  });
+  return adminFetch<SellerApplication>(
+    `/seller-applications/${id}/reject`,
+    { method: "POST", body: input },
+    backend
+  );
 }
 
 export function updateApplicationCrm(
   id: string,
-  input: { crmStatus?: string | null; assignedAdminId?: string | null; followUpAt?: string | null }
+  input: { crmStatus?: string | null; assignedAdminId?: string | null; followUpAt?: string | null },
+  backend?: BackendId
 ): Promise<SellerApplication> {
-  return adminFetch<SellerApplication>(`/seller-applications/${id}/crm`, {
-    method: "PATCH",
-    body: input,
-  });
+  return adminFetch<SellerApplication>(
+    `/seller-applications/${id}/crm`,
+    { method: "PATCH", body: input },
+    backend
+  );
 }
 
-export function addApplicationNote(id: string, body: string): Promise<SellerApplicationNote> {
-  return adminFetch<SellerApplicationNote>(`/seller-applications/${id}/notes`, {
-    method: "POST",
-    body: { body },
-  });
+export function addApplicationNote(
+  id: string,
+  body: string,
+  backend?: BackendId
+): Promise<SellerApplicationNote> {
+  return adminFetch<SellerApplicationNote>(
+    `/seller-applications/${id}/notes`,
+    { method: "POST", body: { body } },
+    backend
+  );
 }
 
-export function removeApplication(id: string, sendEmail?: boolean): Promise<null> {
-  return adminFetch<null>(`/seller-applications/${id}`, {
-    method: "DELETE",
-    body: sendEmail === undefined ? {} : { sendEmail },
-  });
+export function removeApplication(
+  id: string,
+  sendEmail?: boolean,
+  backend?: BackendId
+): Promise<null> {
+  return adminFetch<null>(
+    `/seller-applications/${id}`,
+    { method: "DELETE", body: sendEmail === undefined ? {} : { sendEmail } },
+    backend
+  );
 }
 
-export function resendApplicationVerification(id: string): Promise<null> {
-  return adminFetch<null>(`/seller-applications/${id}/resend-verification`, {
-    method: "POST",
-    body: {},
-  });
+export function resendApplicationVerification(id: string, backend?: BackendId): Promise<null> {
+  return adminFetch<null>(
+    `/seller-applications/${id}/resend-verification`,
+    { method: "POST", body: {} },
+    backend
+  );
 }
 
 // ── Deletion requests ─────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ import { ApiError } from "@/lib/api/client";
 import { formatDate } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
-import type { AccountStatus, AdminUser, PageMeta } from "@/types/admin";
+import type { AccountStatus, AdminUser, BackendId, PageMeta } from "@/types/admin";
 import { UserDetailDrawer } from "./UserDetailDrawer";
 
 type StatusTab = "all" | AccountStatus;
@@ -46,6 +46,11 @@ function isSeller(u: AdminUser): boolean {
   return u.userType === "seller" || u.userType === "provider";
 }
 
+/** Row identity under dual-run — the same id may exist on both backends. */
+function rowKey(u: AdminUser): string {
+  return `${u._backend ?? "primary"}:${u.id}`;
+}
+
 /** ?foundersBadge= filter: "all" sends nothing; "true"/"false" go through as-is. */
 type FounderFilter = "all" | "true" | "false";
 
@@ -63,8 +68,8 @@ export default function UsersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [loadingMore, setLoadingMore] = useState(false);
-  const [openUserId, setOpenUserId] = useState<string | null>(null);
-  // Founder toggles in flight, by user id — the row checkbox is inert while its request runs.
+  const [open, setOpen] = useState<{ id: string; backend?: BackendId } | null>(null);
+  // Founder toggles in flight, by row key — the row checkbox is inert while its request runs.
   const [pendingFounder, setPendingFounder] = useState<ReadonlySet<string>>(new Set());
 
   // Bumped on every fresh (non-append) request so stale responses are dropped.
@@ -152,16 +157,20 @@ export default function UsersPage() {
 
   // Grant/revoke straight from the row (the old console's Founder checkbox). Optimistic: the
   // box flips at once and is put back if the backend refuses; the row is then replaced with
-  // the server's copy so `foundersBadgeGrantedAt` is right too.
+  // the server's copy so `foundersBadgeGrantedAt` is right too. Rows are matched by `rowKey`,
+  // not bare id — under dual-run the same id can exist on both backends.
   async function toggleFounder(user: AdminUser, next: boolean) {
-    if (pendingFounder.has(user.id)) return;
-    setPendingFounder((prev) => new Set(prev).add(user.id));
+    const key = rowKey(user);
+    if (pendingFounder.has(key)) return;
+    setPendingFounder((prev) => new Set(prev).add(key));
     setItems((prev) =>
-      prev?.map((u) => (u.id === user.id ? { ...u, foundersBadge: next } : u)) ?? prev
+      prev?.map((u) => (rowKey(u) === key ? { ...u, foundersBadge: next } : u)) ?? prev
     );
     try {
-      const updated = await setFoundersBadge(user.id, next);
-      setItems((prev) => prev?.map((u) => (u.id === user.id ? updated : u)) ?? prev);
+      const updated = await setFoundersBadge(user.id, next, user._backend);
+      setItems((prev) =>
+        prev?.map((u) => (rowKey(u) === key ? { ...updated, _backend: u._backend } : u)) ?? prev
+      );
       toast({
         title: next ? "Founder badge granted" : "Founder badge removed",
         description: user.email,
@@ -169,7 +178,7 @@ export default function UsersPage() {
       });
     } catch (err) {
       setItems((prev) =>
-        prev?.map((u) => (u.id === user.id ? { ...u, foundersBadge: !next } : u)) ?? prev
+        prev?.map((u) => (rowKey(u) === key ? { ...u, foundersBadge: !next } : u)) ?? prev
       );
       toast({
         title: "Founder badge update failed",
@@ -179,11 +188,15 @@ export default function UsersPage() {
     } finally {
       setPendingFounder((prev) => {
         const nextSet = new Set(prev);
-        nextSet.delete(user.id);
+        nextSet.delete(key);
         return nextSet;
       });
     }
   }
+
+  // Dual-run: show the Source column only once droplet rows are present (data-driven — the fan-out is
+  // enabled by the server-side proxy config, not a build-time flag).
+  const hasDropletUsers = (items ?? []).some((u) => u._backend === "droplet");
 
   const columns: Column<AdminUser>[] = [
     {
@@ -225,7 +238,7 @@ export default function UsersPage() {
             title="Founder badge — shows on top of the seller's New/Active Seller badges"
             className="size-4 cursor-pointer rounded accent-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
             checked={u.foundersBadge}
-            disabled={!canModerate || pendingFounder.has(u.id) || (!isSeller(u) && !u.foundersBadge)}
+            disabled={!canModerate || pendingFounder.has(rowKey(u)) || (!isSeller(u) && !u.foundersBadge)}
             // Keep the row's click (open the drawer) from firing when the box is toggled.
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => void toggleFounder(u, e.target.checked)}
@@ -245,6 +258,20 @@ export default function UsersPage() {
         </span>
       ),
     },
+    ...(hasDropletUsers
+      ? [
+          {
+            key: "backend",
+            header: "Source",
+            width: "w-28",
+            render: (u: AdminUser) => (
+              <Badge tone={u._backend === "droplet" ? "brand" : "neutral"}>
+                {u._backend === "droplet" ? "Droplet" : "Primary"}
+              </Badge>
+            ),
+          } satisfies Column<AdminUser>,
+        ]
+      : []),
   ];
 
   return (
@@ -324,8 +351,8 @@ export default function UsersPage() {
           <DataTable
             rows={items}
             columns={columns}
-            rowKey={(u) => u.id}
-            onRowClick={(u) => setOpenUserId(u.id)}
+            rowKey={rowKey}
+            onRowClick={(u) => setOpen({ id: u.id, backend: u._backend })}
             pageSize={200}
             emptyTitle="No users to show"
             footer={
@@ -345,8 +372,9 @@ export default function UsersPage() {
       )}
 
       <UserDetailDrawer
-        userId={openUserId}
-        onClose={() => setOpenUserId(null)}
+        userId={open?.id ?? null}
+        backend={open?.backend}
+        onClose={() => setOpen(null)}
         onChanged={() => void load()}
       />
     </>

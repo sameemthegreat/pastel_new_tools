@@ -31,6 +31,7 @@ import { ApiError } from "@/lib/api/client";
 import { formatDate, formatNumber } from "@/lib/format";
 import { toast } from "@/stores/uiStore";
 import type {
+  BackendId,
   DeletionRequest,
   PageMeta,
   SellerApplication,
@@ -91,7 +92,7 @@ export default function RequestsPage() {
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [open, setOpen] = useState<{ id: string; backend?: BackendId } | null>(null);
 
   // "Mark completed" flow for a pending deletion request.
   const [completing, setCompleting] = useState<DeletionRequest | null>(null);
@@ -260,6 +261,10 @@ export default function RequestsPage() {
     }
   }
 
+  // Dual-run: show the Source column only once droplet rows are actually present (data-driven, so no
+  // build-time flag is needed — the fan-out is enabled purely by the server-side proxy config).
+  const hasDropletApps = (apps ?? []).some((a) => a._backend === "droplet");
+
   const applicationColumns: Column<SellerApplication>[] = [
     {
       key: "fullName",
@@ -309,6 +314,20 @@ export default function RequestsPage() {
       sortValue: (a) => a.submittedAt,
       render: (a) => <span className="text-ink-secondary">{formatDate(a.submittedAt)}</span>,
     },
+    ...(hasDropletApps
+      ? [
+          {
+            key: "backend",
+            header: "Source",
+            width: "w-28",
+            render: (a: SellerApplication) => (
+              <Badge tone={a._backend === "droplet" ? "brand" : "neutral"}>
+                {a._backend === "droplet" ? "Droplet" : "Primary"}
+              </Badge>
+            ),
+          } satisfies Column<SellerApplication>,
+        ]
+      : []),
   ];
 
   const deletionColumns: Column<DeletionRequest>[] = [
@@ -448,8 +467,8 @@ export default function RequestsPage() {
             <DataTable
               rows={apps}
               columns={applicationColumns}
-              rowKey={(a) => a.id}
-              onRowClick={(a) => setOpenId(a.id)}
+              rowKey={(a) => `${a._backend ?? "primary"}:${a.id}`}
+              onRowClick={(a) => setOpen({ id: a.id, backend: a._backend })}
               pageSize={200}
               emptyTitle="No applications to show"
               footer={
@@ -548,8 +567,9 @@ export default function RequestsPage() {
       </Modal>
 
       <ApplicationDrawer
-        applicationId={openId}
-        onClose={() => setOpenId(null)}
+        applicationId={open?.id ?? null}
+        backend={open?.backend}
+        onClose={() => setOpen(null)}
         onChanged={() => {
           void loadStats();
           if (tab !== "deletion") void loadApplications();
