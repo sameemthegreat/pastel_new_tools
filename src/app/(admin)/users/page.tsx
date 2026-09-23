@@ -16,8 +16,11 @@ import { listUsers } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDate } from "@/lib/format";
 import { toast } from "@/stores/uiStore";
-import type { AccountStatus, AdminUser, PageMeta } from "@/types/admin";
+import type { AccountStatus, AdminUser, BackendId, PageMeta } from "@/types/admin";
 import { UserDetailDrawer } from "./UserDetailDrawer";
+
+/** Dual-run migration: show the source-backend column and tag rows when aggregating two backends. */
+const DUAL_BACKEND = process.env.NEXT_PUBLIC_DUAL_BACKEND === "true";
 
 type StatusTab = "all" | AccountStatus;
 
@@ -51,7 +54,7 @@ export default function UsersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [loadingMore, setLoadingMore] = useState(false);
-  const [openUserId, setOpenUserId] = useState<string | null>(null);
+  const [open, setOpen] = useState<{ id: string; backend?: BackendId } | null>(null);
 
   // Bumped on every fresh (non-append) request so stale responses are dropped.
   const requestSeq = useRef(0);
@@ -165,6 +168,20 @@ export default function UsersPage() {
         </span>
       ),
     },
+    ...(DUAL_BACKEND
+      ? [
+          {
+            key: "backend",
+            header: "Source",
+            width: "w-28",
+            render: (u: AdminUser) => (
+              <Badge tone={u._backend === "droplet" ? "brand" : "neutral"}>
+                {u._backend === "droplet" ? "Droplet" : "Primary"}
+              </Badge>
+            ),
+          } satisfies Column<AdminUser>,
+        ]
+      : []),
   ];
 
   return (
@@ -234,8 +251,8 @@ export default function UsersPage() {
           <DataTable
             rows={items}
             columns={columns}
-            rowKey={(u) => u.id}
-            onRowClick={(u) => setOpenUserId(u.id)}
+            rowKey={(u) => `${u._backend ?? "primary"}:${u.id}`}
+            onRowClick={(u) => setOpen({ id: u.id, backend: u._backend })}
             pageSize={200}
             emptyTitle="No users to show"
             footer={
@@ -255,8 +272,9 @@ export default function UsersPage() {
       )}
 
       <UserDetailDrawer
-        userId={openUserId}
-        onClose={() => setOpenUserId(null)}
+        userId={open?.id ?? null}
+        backend={open?.backend}
+        onClose={() => setOpen(null)}
         onChanged={() => void load()}
       />
     </>

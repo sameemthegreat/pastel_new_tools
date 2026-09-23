@@ -92,8 +92,8 @@ export function RunCard({
   const confirmMessage =
     stage.key === "migrate"
       ? pre === "discard"
-        ? "This DISCARDS the current migrated data (reset — a full backup is taken automatically first), then runs the whole migration from the selected source."
-        : "This backs up the current database, then runs the whole migration ON TOP of the existing data (idempotent upsert)."
+        ? "This EMPTIES the database (truncates all migration-owned tables) with NO backup, then runs the full migration from the selected source."
+        : "This backs up the current database, then EMPTIES it, then runs the full migration from the selected source."
       : stage.key === "restore"
         ? `This RESTORES the database from "${backupFile}", overwriting current data.` +
           (dryRun
@@ -139,8 +139,8 @@ export function RunCard({
               value={pre}
               onChange={(v) => setPre(v as MigrationPreMode)}
               options={[
-                { value: "discard", label: "Discard — reset first (auto-backup taken)" },
-                { value: "backup", label: "Keep — back up, then migrate on top" },
+                { value: "discard", label: "Discard — empty the DB, NO backup" },
+                { value: "backup", label: "Keep — back up first, then empty the DB" },
               ]}
               className="w-full"
             />

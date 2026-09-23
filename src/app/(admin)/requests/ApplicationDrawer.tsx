@@ -25,7 +25,7 @@ import { ApiError } from "@/lib/api/client";
 import { formatDate, timeAgo } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
-import type { ApplicationStatus, CrmStatus, SellerApplicationDetail } from "@/types/admin";
+import type { ApplicationStatus, BackendId, CrmStatus, SellerApplicationDetail } from "@/types/admin";
 
 /**
  * A seller application carries two independent status axes: the lifecycle
@@ -116,10 +116,13 @@ function decisionCopy(detail: SellerApplicationDetail): string {
 
 export function ApplicationDrawer({
   applicationId,
+  backend,
   onClose,
   onChanged,
 }: {
   applicationId: string | null;
+  /** Which backend this application lives in — every read/action routes back to it. */
+  backend?: BackendId;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -166,7 +169,7 @@ export function ApplicationDrawer({
   const fetchDetail = useCallback(async () => {
     if (!applicationId) return;
     try {
-      const next = await getApplication(applicationId);
+      const next = await getApplication(applicationId, backend);
       if (currentIdRef.current !== applicationId) return;
       setDetail(next);
       setCrmValue(next.crmStatus ?? "");
@@ -176,7 +179,7 @@ export function ApplicationDrawer({
       if (currentIdRef.current !== applicationId) return;
       setLoadError(err instanceof ApiError ? err.message : "Could not load this application.");
     }
-  }, [applicationId]);
+  }, [applicationId, backend]);
 
   // Opening a different application resets everything to a blank slate. The
   // reset happens during render (adjust-state-during-render, as DataTable
@@ -219,10 +222,14 @@ export function ApplicationDrawer({
     setCrmSaving(true);
     setCrmError(null);
     try {
-      await updateApplicationCrm(detail.id, {
-        crmStatus: crmValue === "" ? null : crmValue,
-        followUpAt: followUp === "" ? null : new Date(followUp).toISOString(),
-      });
+      await updateApplicationCrm(
+        detail.id,
+        {
+          crmStatus: crmValue === "" ? null : crmValue,
+          followUpAt: followUp === "" ? null : new Date(followUp).toISOString(),
+        },
+        backend
+      );
       toast({ title: "Pipeline updated", description: detail.fullName, tone: "success" });
       await fetchDetail();
       onChanged();
@@ -238,7 +245,7 @@ export function ApplicationDrawer({
     setNoteSaving(true);
     setNoteError(null);
     try {
-      await addApplicationNote(detail.id, noteBody.trim());
+      await addApplicationNote(detail.id, noteBody.trim(), backend);
       toast({ title: "Note added", description: detail.fullName, tone: "success" });
       setNoteBody("");
       await fetchDetail();
@@ -255,7 +262,7 @@ export function ApplicationDrawer({
     setApproveSaving(true);
     setApproveError(null);
     try {
-      await approveApplication(detail.id, approveNote.trim() || undefined);
+      await approveApplication(detail.id, approveNote.trim() || undefined, backend);
       toast({ title: "Application approved", description: detail.fullName, tone: "success" });
       setApproveOpen(false);
       await fetchDetail();
@@ -274,10 +281,11 @@ export function ApplicationDrawer({
     setRejectSaving(true);
     setRejectError(null);
     try {
-      await rejectApplication(detail.id, {
-        reason: rejectReason.trim() || undefined,
-        sendEmail: rejectSendEmail,
-      });
+      await rejectApplication(
+        detail.id,
+        { reason: rejectReason.trim() || undefined, sendEmail: rejectSendEmail },
+        backend
+      );
       toast({ title: "Application rejected", description: detail.fullName, tone: "success" });
       setRejectOpen(false);
       await fetchDetail();
@@ -294,7 +302,7 @@ export function ApplicationDrawer({
     setResending(true);
     setResendNote(null);
     try {
-      await resendApplicationVerification(detail.id);
+      await resendApplicationVerification(detail.id, backend);
       toast({ title: "Verification email sent", description: detail.email, tone: "success" });
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
@@ -317,7 +325,7 @@ export function ApplicationDrawer({
     setRemoveOpen(false);
     setRemoveError(null);
     try {
-      await removeApplication(detail.id);
+      await removeApplication(detail.id, undefined, backend);
       toast({ title: "Removed from waitlist", description: detail.email, tone: "success" });
       onChanged();
       onClose();

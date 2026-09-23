@@ -23,6 +23,14 @@ const BACKEND_BASE_URL = (
   "http://localhost:3500/api/v1"
 ).replace(/\/+$/, "");
 
+// Cross-backend (dual-run migration): a SECOND backend (the droplet DB) whose seller requests + users
+// the console also aggregates. Selected per-request via `?__backend=droplet`. Its operator lives in the
+// PRIMARY DB, so we can't send a valid bearer there — instead we authorise with a shared secret header
+// that the droplet's OperatorGuard accepts (CROSS_BACKEND_ADMIN_ENABLED there). Both are optional: with
+// them unset, a `droplet` request returns a clear 501 and the primary path is untouched.
+const DROPLET_BASE_URL = (process.env.DROPLET_API_URL ?? "").replace(/\/+$/, "");
+const DROPLET_CROSS_BACKEND_SECRET = process.env.DROPLET_CROSS_BACKEND_SECRET ?? "";
+
 /** Mirrors the backend envelope so proxy-level failures render like any other ApiError. */
 function envelopeError(status: number, message: string): Response {
   return Response.json(
@@ -49,15 +57,36 @@ async function forward(
     return envelopeError(401, "Authentication required");
   }
 
+  // `?__backend=droplet` selects the sibling backend. It's a proxy directive, so strip it before
+  // forwarding (the backend never sees it) and pick the base URL + auth accordingly.
+  const forwardParams = new URLSearchParams(request.nextUrl.searchParams);
+  const targetBackend = forwardParams.get("__backend");
+  forwardParams.delete("__backend");
+  const search = forwardParams.toString() ? `?${forwardParams.toString()}` : "";
+
+  const useDroplet = targetBackend === "droplet";
+  if (useDroplet && (!DROPLET_BASE_URL || !DROPLET_CROSS_BACKEND_SECRET)) {
+    return envelopeError(
+      501,
+      "The droplet backend isn't configured. Set DROPLET_API_URL and DROPLET_CROSS_BACKEND_SECRET."
+    );
+  }
+
   const { path } = await ctx.params;
-  const search = request.nextUrl.search;
-  const target = `${BACKEND_BASE_URL}/admin/${path.map(encodeURIComponent).join("/")}${search}`;
+  const base = useDroplet ? DROPLET_BASE_URL : BACKEND_BASE_URL;
+  const target = `${base}/admin/${path.map(encodeURIComponent).join("/")}${search}`;
 
   const headers: Record<string, string> = {
     Accept: "application/json",
     Authorization: authorization,
-    "X-Operator-Secret": secret,
   };
+  // The primary backend authorises on the operator's own membership (+ operator secret); the droplet
+  // can't (that operator isn't in its DB), so it accepts the cross-backend shared secret instead.
+  if (useDroplet) {
+    headers["X-Cross-Backend-Secret"] = DROPLET_CROSS_BACKEND_SECRET;
+  } else {
+    headers["X-Operator-Secret"] = secret;
+  }
   const idempotencyKey = request.headers.get("idempotency-key");
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 
