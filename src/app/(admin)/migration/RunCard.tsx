@@ -11,6 +11,7 @@ import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
 import type {
   BackupFile,
+  MigrationPreMode,
   MigrationSource,
   MigrationStage,
   TriggerRunInput,
@@ -49,17 +50,21 @@ export function RunCard({
   const [seller, setSeller] = useState("");
   const [force, setForce] = useState(false);
   const [limit, setLimit] = useState("");
-  const [source, setSource] = useState<MigrationSource>("live");
+  const [source, setSource] = useState<MigrationSource>("dev");
+  const [pre, setPre] = useState<MigrationPreMode>("discard");
   const [backupFile, setBackupFile] = useState("");
   const [dryRun, setDryRun] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const wantsBackupFile = stage.params.includes("backupFile");
+  const wantsPreMode = stage.params.includes("preMode");
   const writes = !READ_ONLY.has(stage.key);
   const confirmed = !stage.destructive || confirmText === stage.confirmPhrase;
   const backupChosen = !wantsBackupFile || !!backupFile;
   const blocked = disabled || !canRun || !confirmed || !backupChosen;
+  // The one-click migrate also gets a confirmation dialog (it can reset), but no typed phrase.
+  const needsDialog = stage.destructive || stage.key === "migrate";
 
   function build(): TriggerRunInput {
     return {
@@ -68,6 +73,7 @@ export function RunCard({
       force: stage.params.includes("force") ? force : undefined,
       limit: stage.params.includes("limit") && limit.trim() ? Number(limit) : undefined,
       source: stage.params.includes("source") ? source : undefined,
+      pre: wantsPreMode ? pre : undefined,
       backupFile: wantsBackupFile ? backupFile : undefined,
       dryRun: writes ? dryRun : undefined,
       confirm: stage.destructive ? stage.confirmPhrase ?? undefined : undefined,
@@ -76,7 +82,7 @@ export function RunCard({
 
   function handleRun() {
     if (blocked) return;
-    if (stage.destructive) {
+    if (needsDialog) {
       setConfirmOpen(true);
       return;
     }
@@ -84,15 +90,19 @@ export function RunCard({
   }
 
   const confirmMessage =
-    stage.key === "restore"
-      ? `This RESTORES the database from "${backupFile}", overwriting current data.` +
-        (dryRun
-          ? " Dry run is on, so a safety backup is taken and the restore is skipped."
-          : " A safety backup of the current database is taken first, then the restore is applied.")
-      : `This TRUNCATES every migration-owned table (incl. migration_map).` +
-        (dryRun
-          ? " Dry run is on, so it rolls back after the backup."
-          : " A full backup is taken first, then the truncation is committed.");
+    stage.key === "migrate"
+      ? pre === "discard"
+        ? "This DISCARDS the current migrated data (reset — a full backup is taken automatically first), then runs the whole migration from the selected source."
+        : "This backs up the current database, then runs the whole migration ON TOP of the existing data (idempotent upsert)."
+      : stage.key === "restore"
+        ? `This RESTORES the database from "${backupFile}", overwriting current data.` +
+          (dryRun
+            ? " Dry run is on, so a safety backup is taken and the restore is skipped."
+            : " A safety backup of the current database is taken first, then the restore is applied.")
+        : `This TRUNCATES every migration-owned table (incl. migration_map).` +
+          (dryRun
+            ? " Dry run is on, so it rolls back after the backup."
+            : " A full backup is taken first, then the truncation is committed.");
 
   return (
     <Card className={stage.destructive ? "border-danger/30" : undefined}>
@@ -114,10 +124,25 @@ export function RunCard({
               value={source}
               onChange={(v) => setSource(v as MigrationSource)}
               options={[
-                { value: "live", label: "Live Sharetribe" },
                 { value: "dev", label: "Dev Sharetribe" },
+                { value: "live", label: "Live Sharetribe" },
               ]}
               className="w-full sm:w-56"
+            />
+          </div>
+        )}
+
+        {wantsPreMode && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-ink-secondary">Current data</label>
+            <Select
+              value={pre}
+              onChange={(v) => setPre(v as MigrationPreMode)}
+              options={[
+                { value: "discard", label: "Discard — reset first (auto-backup taken)" },
+                { value: "backup", label: "Keep — back up, then migrate on top" },
+              ]}
+              className="w-full"
             />
           </div>
         )}
@@ -210,7 +235,7 @@ export function RunCard({
         </div>
       </CardBody>
 
-      {stage.destructive && (
+      {needsDialog && (
         <ConfirmDialog
           open={confirmOpen}
           onClose={() => setConfirmOpen(false)}
@@ -221,8 +246,8 @@ export function RunCard({
           }}
           title={`Run "${stage.label}"?`}
           message={confirmMessage}
-          confirmLabel="Run destructive stage"
-          tone="danger"
+          confirmLabel={stage.destructive ? "Run destructive stage" : "Run migration"}
+          tone={stage.destructive || (stage.key === "migrate" && pre === "discard") ? "danger" : "brand"}
         />
       )}
     </Card>

@@ -4,7 +4,16 @@
  * Run rows come straight from Postgres columns, hence snake_case.
  */
 
-export type MigrationStageParam = "seller" | "force" | "limit" | "source" | "backupFile";
+export type MigrationStageParam =
+  | "seller"
+  | "force"
+  | "limit"
+  | "source"
+  | "backupFile"
+  | "preMode";
+
+/** migrate only — what to do with current DB data before migrating. */
+export type MigrationPreMode = "discard" | "backup";
 
 export type MigrationStage = {
   key: string;
@@ -66,6 +75,7 @@ export type TriggerRunInput = {
   force?: boolean;
   limit?: number;
   source?: MigrationSource;
+  pre?: MigrationPreMode;
   backupFile?: string;
   dryRun?: boolean;
   confirm?: string;
