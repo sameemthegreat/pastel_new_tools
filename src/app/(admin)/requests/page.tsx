@@ -39,9 +39,6 @@ import type {
 } from "@/types/admin";
 import { ApplicationStatusBadge, ApplicationDrawer, crmStatusLabel } from "./ApplicationDrawer";
 
-/** Dual-run migration: show the source-backend column and tag rows when aggregating two backends. */
-const DUAL_BACKEND = process.env.NEXT_PUBLIC_DUAL_BACKEND === "true";
-
 type TabKey =
   | "all"
   | "pending_verification"
@@ -264,6 +261,10 @@ export default function RequestsPage() {
     }
   }
 
+  // Dual-run: show the Source column only once droplet rows are actually present (data-driven, so no
+  // build-time flag is needed — the fan-out is enabled purely by the server-side proxy config).
+  const hasDropletApps = (apps ?? []).some((a) => a._backend === "droplet");
+
   const applicationColumns: Column<SellerApplication>[] = [
     {
       key: "fullName",
@@ -313,7 +314,7 @@ export default function RequestsPage() {
       sortValue: (a) => a.submittedAt,
       render: (a) => <span className="text-ink-secondary">{formatDate(a.submittedAt)}</span>,
     },
-    ...(DUAL_BACKEND
+    ...(hasDropletApps
       ? [
           {
             key: "backend",

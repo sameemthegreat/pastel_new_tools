@@ -59,12 +59,16 @@ import type { AdminRole } from "@/types/auth";
  */
 
 /**
- * Dual-run migration: when NEXT_PUBLIC_DUAL_BACKEND is on, the Users and Seller-application lists
- * ALSO pull from the sibling (droplet) backend and tag each row with its source. Row-level actions
- * (approve, ban, …) route back to the row's own backend via `?__backend=droplet`, which the
- * `/api/admin` proxy honours server-side. Off → everything stays single-backend as before.
+ * Dual-run migration: the Users and Seller-application lists ALSO pull from the sibling (droplet)
+ * backend and tag each row with its source; row-level actions (approve, ban, …) route back to the
+ * row's own backend via `?__backend=droplet`, which the `/api/admin` proxy honours server-side.
+ *
+ * Enablement is SERVER-side only (the proxy needs DROPLET_API_URL + DROPLET_CROSS_BACKEND_SECRET).
+ * We can't read those from the browser, and a NEXT_PUBLIC flag would be baked in at BUILD time (a
+ * footgun — flipping it needs a rebuild), so instead we always ATTEMPT the droplet on the first page
+ * and treat any failure (proxy 501 when unconfigured, or the droplet being down) as "single-backend".
+ * The one wasted request per list load on a non-dual deployment is a fair price for zero build coupling.
  */
-const DUAL_BACKEND = process.env.NEXT_PUBLIC_DUAL_BACKEND === "true";
 
 /** Append the proxy's backend selector to a path (no-op for the primary backend). */
 function withBackend(path: string, backend?: BackendId): string {
@@ -157,8 +161,8 @@ export async function listUsers(params: {
   const items = primary.items.map(tagBackend("primary"));
   // Only the first page fans out to the droplet (later pages follow the primary cursor); droplet
   // rows are prepended so newly-migrated accounts surface at the top. Best-effort: a droplet that's
-  // down or unconfigured (proxy 501) just leaves the primary list intact.
-  if (!DUAL_BACKEND || params.cursor) return { ...primary, items };
+  // down or unconfigured (proxy 501) just leaves the primary list intact — logged for debugging.
+  if (params.cursor) return { ...primary, items };
   try {
     const droplet = await adminFetchPage<AdminUser>(
       "/users",
@@ -166,7 +170,8 @@ export async function listUsers(params: {
       "droplet"
     );
     return { ...primary, items: [...droplet.items.map(tagBackend("droplet")), ...items] };
-  } catch {
+  } catch (err) {
+    console.warn("[admin] droplet users fan-out skipped:", err instanceof Error ? err.message : err);
     return { ...primary, items };
   }
 }
@@ -202,8 +207,9 @@ export async function listApplications(params: {
   const primary = await adminFetchPage<SellerApplication>("/seller-applications", params);
   const items = primary.items.map(tagBackend("primary"));
   // First page also pulls the droplet's requests (prepended so new ones are seen first); later pages
-  // follow the primary cursor. Best-effort — a missing/unconfigured droplet leaves the list intact.
-  if (!DUAL_BACKEND || params.cursor) return { ...primary, items };
+  // follow the primary cursor. Best-effort — a missing/unconfigured droplet leaves the list intact,
+  // logged so a misconfigured bridge is visible in the console instead of silently empty.
+  if (params.cursor) return { ...primary, items };
   try {
     const droplet = await adminFetchPage<SellerApplication>(
       "/seller-applications",
@@ -211,7 +217,11 @@ export async function listApplications(params: {
       "droplet"
     );
     return { ...primary, items: [...droplet.items.map(tagBackend("droplet")), ...items] };
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[admin] droplet seller-applications fan-out skipped:",
+      err instanceof Error ? err.message : err
+    );
     return { ...primary, items };
   }
 }
