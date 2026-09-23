@@ -19,9 +19,6 @@ import { toast } from "@/stores/uiStore";
 import type { AccountStatus, AdminUser, BackendId, PageMeta } from "@/types/admin";
 import { UserDetailDrawer } from "./UserDetailDrawer";
 
-/** Dual-run migration: show the source-backend column and tag rows when aggregating two backends. */
-const DUAL_BACKEND = process.env.NEXT_PUBLIC_DUAL_BACKEND === "true";
-
 type StatusTab = "all" | AccountStatus;
 
 const STATUS_TABS: { key: StatusTab; label: string }[] = [
@@ -132,6 +129,10 @@ export default function UsersPage() {
     }
   }
 
+  // Dual-run: show the Source column only once droplet rows are present (data-driven — the fan-out is
+  // enabled by the server-side proxy config, not a build-time flag).
+  const hasDropletUsers = (items ?? []).some((u) => u._backend === "droplet");
+
   const columns: Column<AdminUser>[] = [
     {
       key: "email",
@@ -168,7 +169,7 @@ export default function UsersPage() {
         </span>
       ),
     },
-    ...(DUAL_BACKEND
+    ...(hasDropletUsers
       ? [
           {
             key: "backend",
