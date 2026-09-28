@@ -39,6 +39,7 @@ import type {
   ReconcileRow,
   TriggerRunInput,
 } from "@/types/migration";
+import { BackendSwitchCard } from "./BackendSwitchCard";
 import { LogViewer } from "./LogViewer";
 import { RunCard } from "./RunCard";
 
@@ -198,6 +199,9 @@ export default function MigrationPage() {
           </Button>
         }
       />
+
+      {/* Cutover switch — repoints every app build between Sharetribe and the v2 wrapper. */}
+      <BackendSwitchCard canRun={canRun} />
 
       {error && (
         <Card className="mb-4 border-danger/25 bg-danger/5 p-4 text-sm font-medium text-danger">
