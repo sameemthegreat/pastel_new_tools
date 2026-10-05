@@ -1,13 +1,18 @@
 import { ApiError, envelopeFetch, type RequestOptions } from "@/lib/api/client";
 import { refreshAccessToken } from "@/lib/api/auth";
 import { useAuthStore } from "@/stores/authStore";
-import type { GatewayFlipResult, GatewayStatus, GatewayTarget } from "@/types/gateway";
+import type {
+  GatewayEnv,
+  GatewayFlipResult,
+  GatewayStatus,
+  GatewayTarget,
+} from "@/types/gateway";
 
 /**
- * API-gateway cutover calls. Same-origin through the `/api/gateway/*` proxy (which attaches the
- * gateway admin token server-side and verifies the operator is a superAdmin). The 401→refresh and
- * 403→revalidate handling mirrors the migration/admin clients, so a mid-session token expiry or a
- * just-revoked operator behaves identically here.
+ * API-gateway cutover calls, per environment. Same-origin through the `/api/gateway/<env>/*`
+ * proxy (which attaches that gateway's admin token server-side and verifies the operator is a
+ * superAdmin). The 401→refresh and 403→revalidate handling mirrors the migration/admin clients, so
+ * a mid-session token expiry or a just-revoked operator behaves identically here.
  */
 
 let refreshInFlight: Promise<string> | null = null;
@@ -29,20 +34,19 @@ function refreshOnce(): Promise<string> {
 }
 
 async function request<T>(
+  env: GatewayEnv,
   path: string,
   options: Omit<RequestOptions, "accessToken"> = {}
 ): Promise<T> {
+  const url = `/api/gateway/${env}${path}`;
   const token = useAuthStore.getState().accessToken;
   try {
-    const { value } = await envelopeFetch<T>(`/api/gateway${path}`, {
-      ...options,
-      accessToken: token ?? undefined,
-    });
+    const { value } = await envelopeFetch<T>(url, { ...options, accessToken: token ?? undefined });
     return value;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       const fresh = await refreshOnce();
-      const { value } = await envelopeFetch<T>(`/api/gateway${path}`, { ...options, accessToken: fresh });
+      const { value } = await envelopeFetch<T>(url, { ...options, accessToken: fresh });
       return value;
     }
     if (error instanceof ApiError && error.status === 403) {
@@ -52,12 +56,12 @@ async function request<T>(
   }
 }
 
-/** Current routing state of the gateway (which backend all app builds are hitting right now). */
-export function getGatewayStatus(): Promise<GatewayStatus> {
-  return request<GatewayStatus>("/target");
+/** Current routing state of one environment's gateway (which backend its app builds hit right now). */
+export function getGatewayStatus(env: GatewayEnv): Promise<GatewayStatus> {
+  return request<GatewayStatus>(env, "/target");
 }
 
-/** Flip every app build to `target` at once. superAdmin only; enforced server-side. */
-export function setGatewayTarget(target: GatewayTarget): Promise<GatewayFlipResult> {
-  return request<GatewayFlipResult>("/target", { method: "POST", body: { target } });
+/** Flip that environment's app builds to `target` at once. superAdmin only; enforced server-side. */
+export function setGatewayTarget(env: GatewayEnv, target: GatewayTarget): Promise<GatewayFlipResult> {
+  return request<GatewayFlipResult>(env, "/target", { method: "POST", body: { target } });
 }

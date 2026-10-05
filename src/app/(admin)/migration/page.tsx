@@ -200,8 +200,10 @@ export default function MigrationPage() {
         }
       />
 
-      {/* Cutover switch — repoints every app build between Sharetribe and the v2 wrapper. */}
-      <BackendSwitchCard canRun={canRun} />
+      {/* Cutover switches — one gateway per environment, each repointing that environment's app
+          builds between Sharetribe and the v2 wrapper. Production and staging flip independently. */}
+      <BackendSwitchCard env="production" canRun={canRun} />
+      <BackendSwitchCard env="staging" canRun={canRun} />
 
       {error && (
         <Card className="mb-4 border-danger/25 bg-danger/5 p-4 text-sm font-medium text-danger">
