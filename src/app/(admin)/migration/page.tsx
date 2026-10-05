@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Select } from "@/components/ui/Select";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   getMigrationMapStats,
@@ -29,15 +30,20 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
+import { useMigrationTargetStore } from "@/stores/migrationTargetStore";
 import { toast } from "@/stores/uiStore";
-import type {
-  BackupFile,
-  MigrationMapStat,
-  MigrationRun,
-  MigrationRunStatus,
-  MigrationStage,
-  ReconcileRow,
-  TriggerRunInput,
+import {
+  isMigrationTarget,
+  MIGRATION_TARGET_META,
+  MIGRATION_TARGETS,
+  type BackupFile,
+  type MigrationMapStat,
+  type MigrationRun,
+  type MigrationRunStatus,
+  type MigrationStage,
+  type ReconcileRow,
+  type TriggerRunInput,
+  type MigrationTarget,
 } from "@/types/migration";
 import { BackendSwitchCard } from "./BackendSwitchCard";
 import { LogViewer } from "./LogViewer";
@@ -59,6 +65,9 @@ function formatBytes(n: number): string {
 export default function MigrationPage() {
   const canRead = useAuthStore((s) => s.can("migration.read"));
   const canRun = useAuthStore((s) => s.can("migration.run"));
+  const target = useMigrationTargetStore((s) => s.target);
+  const setTarget = useMigrationTargetStore((s) => s.setTarget);
+  const targetMeta = MIGRATION_TARGET_META[target];
 
   const [stages, setStages] = useState<MigrationStage[] | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -92,10 +101,27 @@ export default function MigrationPage() {
     }
   }, [loadStages, loadRuns, loadReconcile, loadMapStats, loadBackups]);
 
+  // Re-fetch whenever the TARGET environment changes (the API client reads the selection from
+  // the store, so the same loaders now hit the other control plane).
   useEffect(() => {
     if (!canRead) return;
     void loadAll();
-  }, [canRead, loadAll]);
+  }, [canRead, loadAll, target]);
+
+  // Switching target: drop every panel first so stale rows from the other control plane never
+  // linger (a run id from dev means nothing to staging), then let the effect above refill them.
+  function switchTarget(next: MigrationTarget) {
+    if (next === target) return;
+    setStages(null);
+    setActiveRunId(null);
+    setRuns(null);
+    setReconcile(null);
+    setMapStats(null);
+    setBackups(null);
+    setSelectedRunId(null);
+    setError(null);
+    setTarget(next);
+  }
 
   async function handleRun(input: TriggerRunInput) {
     try {
@@ -194,9 +220,22 @@ export default function MigrationPage() {
         title="Migration"
         description="Drive and watch the Sharetribe + Firebase → Postgres migration. Every stage is idempotent; one run at a time."
         actions={
-          <Button variant="outline" icon={RefreshCw} onClick={() => void loadAll()}>
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Select
+              className="w-64"
+              value={target}
+              onChange={(v) => {
+                if (isMigrationTarget(v)) switchTarget(v);
+              }}
+              options={MIGRATION_TARGETS.map((t) => ({
+                value: t,
+                label: `Target: ${MIGRATION_TARGET_META[t].label}`,
+              }))}
+            />
+            <Button variant="outline" icon={RefreshCw} onClick={() => void loadAll()}>
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -215,7 +254,8 @@ export default function MigrationPage() {
         <p className="flex items-start gap-2 text-sm text-ink-secondary">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning-600" aria-hidden />
           <span>
-            This writes directly to the <strong>production</strong> database. Re-runs are safe
+            Target: <strong>{targetMeta.label}</strong> — this writes directly to {targetMeta.dbLabel}.
+            Re-runs are safe
             (idempotent via <span className="font-mono">migration_map</span>), but the{" "}
             <strong>Reset</strong> stage truncates every migration-owned table. Use{" "}
             <strong>Dry run</strong> to rehearse a stage without committing.

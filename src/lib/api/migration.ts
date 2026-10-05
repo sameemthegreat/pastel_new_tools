@@ -1,6 +1,7 @@
 import { ApiError, envelopeFetch, type RequestOptions } from "@/lib/api/client";
 import { refreshAccessToken } from "@/lib/api/auth";
 import { useAuthStore } from "@/stores/authStore";
+import { useMigrationTargetStore } from "@/stores/migrationTargetStore";
 import type {
   BackupFile,
   MigrationLogsResponse,
@@ -36,17 +37,28 @@ function refreshOnce(): Promise<string> {
   return refreshInFlight;
 }
 
+/**
+ * Same-origin proxy URL for `path`, tagged with the selected TARGET environment. `primary` is
+ * the proxy's default and is left untagged so the original single-environment URLs are unchanged.
+ */
+function proxyUrl(path: string): string {
+  const target = useMigrationTargetStore.getState().target;
+  if (target === "primary") return `/api/migration${path}`;
+  return `/api/migration${path}${path.includes("?") ? "&" : "?"}__target=${target}`;
+}
+
 async function request<T>(
   path: string,
   options: Omit<RequestOptions, "accessToken"> = {}
 ): Promise<{ value: T; meta: Record<string, unknown> }> {
+  const url = proxyUrl(path);
   const token = useAuthStore.getState().accessToken;
   try {
-    return await envelopeFetch<T>(`/api/migration${path}`, { ...options, accessToken: token ?? undefined });
+    return await envelopeFetch<T>(url, { ...options, accessToken: token ?? undefined });
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       const fresh = await refreshOnce();
-      return envelopeFetch<T>(`/api/migration${path}`, { ...options, accessToken: fresh });
+      return envelopeFetch<T>(url, { ...options, accessToken: fresh });
     }
     if (error instanceof ApiError && error.status === 403) {
       await useAuthStore.getState().revalidate();
