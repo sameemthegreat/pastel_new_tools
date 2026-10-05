@@ -80,3 +80,36 @@ export type TriggerRunInput = {
   dryRun?: boolean;
   confirm?: string;
 };
+
+// ── Target environment ────────────────────────────────────────────────────────
+
+/**
+ * Which migration control-plane the console drives — and therefore which backend DATABASE the
+ * data is loaded into. Each environment runs its own FastAPI instance next to its own backend.
+ *
+ *   primary  — the control plane beside the backend THIS console is signed into
+ *              (MIGRATION_API_URL). On the dev console that is dev's database.
+ *   staging  — the staging control plane, reached CROSS-environment from this console
+ *              (MIGRATION_STAGING_API_URL + the cross-backend bridge).
+ *
+ * The Sharetribe/Firestore SOURCE is chosen per run (`source` on the stage card); this picks the
+ * destination. Sent to the `/api/migration` proxy as `?__target=` (primary is untagged).
+ */
+export type MigrationTarget = "primary" | "staging";
+
+export const MIGRATION_TARGETS: readonly MigrationTarget[] = ["primary", "staging"];
+
+export function isMigrationTarget(value: unknown): value is MigrationTarget {
+  return typeof value === "string" && (MIGRATION_TARGETS as readonly string[]).includes(value);
+}
+
+export const MIGRATION_TARGET_META: Record<MigrationTarget, { label: string; dbLabel: string }> = {
+  primary: {
+    label: "Dev backend (this console)",
+    dbLabel: "the dev backend's database (api-v1-new — the catalog the live apps use through the wrapper)",
+  },
+  staging: {
+    label: "Staging backend",
+    dbLabel: "the staging backend's database (api-staging-new)",
+  },
+};
