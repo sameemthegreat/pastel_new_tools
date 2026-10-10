@@ -32,6 +32,13 @@ export type AdminUser = {
   userType: string;
   accountStatus: AccountStatus;
   restrictedAt: string | null;
+  /**
+   * Admin-granted "Founder Seller" badge — shows on the seller's shop profile in place of the
+   * New/Active Seller pill. Toggled via `POST /admin/users/{id}/founders-badge`; seller accounts only.
+   */
+  foundersBadge: boolean;
+  /** When the Founder badge was last granted; null while it is off. */
+  foundersBadgeGrantedAt: string | null;
   _backend?: BackendId;
 };
 
@@ -292,6 +299,48 @@ export type AdminDisputeDetail = AdminDispute & {
 export type RefundEligibility = {
   availableResolutions: string[];
   [key: string]: unknown;
+};
+
+// ── Content reports (moderation) ──────────────────────────────────────────
+
+/** Reporter-selected reason — the union of the web and app pickers; `copyright` is a DMCA notice. */
+export type ReportReason =
+  | "copyright"
+  | "counterfeit"
+  | "misleading"
+  | "prohibited"
+  | "offensive"
+  | "inappropriate"
+  | "spam"
+  | "other";
+
+/** The decisions this console records on resolve (`POST /admin/reports/{id}/resolve`). */
+export type ReportDecision = "actioned" | "dismissed";
+
+/**
+ * GET /admin/reports row (`ContentReportResource`). Evidence is at most one of: a screenshot —
+ * a private asset viewable through `evidenceUrl`, a presigned link that expires after 10 minutes
+ * (refetch the list rather than keep it) — or `sourceUrl`, a link the reporter typed.
+ */
+export type AdminContentReport = {
+  id: string;
+  /** What was reported — `listing` is the only reportable type today. */
+  contentType: string;
+  contentId: string;
+  /** A `ReportReason` for reports filed today; typed loosely so older values still render. */
+  reason: string;
+  isDmca: boolean;
+  details: string | null;
+  reporterEmail: string | null;
+  /** Set when the reporter was signed in. */
+  reporterUserId: string | null;
+  /** `open` until resolved. Free text server-side, so render unknown values rather than assume. */
+  status: string;
+  evidenceType: "screenshot" | "link" | null;
+  evidenceAssetId: string | null;
+  evidenceUrl: string | null;
+  sourceUrl: string | null;
+  createdAt: string;
 };
 
 // ── Analytics ─────────────────────────────────────────────────────────────

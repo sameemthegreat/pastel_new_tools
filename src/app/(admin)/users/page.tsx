@@ -12,9 +12,10 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { Select } from "@/components/ui/Select";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
-import { listUsers } from "@/lib/api/admin";
+import { listUsers, setFoundersBadge } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import { formatDate } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
 import { toast } from "@/stores/uiStore";
 import type { AccountStatus, AdminUser, BackendId, PageMeta } from "@/types/admin";
 import { UserDetailDrawer } from "./UserDetailDrawer";
@@ -40,18 +41,36 @@ function statusLabel(status: AccountStatus): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+/** 'seller' and 'provider' are the same class of account — only they can hold the Founder badge. */
+function isSeller(u: AdminUser): boolean {
+  return u.userType === "seller" || u.userType === "provider";
+}
+
+/** Row identity under dual-run — the same id may exist on both backends. */
+function rowKey(u: AdminUser): string {
+  return `${u._backend ?? "primary"}:${u.id}`;
+}
+
+/** ?foundersBadge= filter: "all" sends nothing; "true"/"false" go through as-is. */
+type FounderFilter = "all" | "true" | "false";
+
 export default function UsersPage() {
+  // UI courtesy only — POST /admin/users/:id/founders-badge enforces users.moderate itself.
+  const canModerate = useAuthStore((s) => s.can("users.moderate"));
   const [items, setItems] = useState<AdminUser[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [tab, setTab] = useState<StatusTab>("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [founderFilter, setFounderFilter] = useState<FounderFilter>("all");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [loadingMore, setLoadingMore] = useState(false);
   const [open, setOpen] = useState<{ id: string; backend?: BackendId } | null>(null);
+  // Founder toggles in flight, by row key — the row checkbox is inert while its request runs.
+  const [pendingFounder, setPendingFounder] = useState<ReadonlySet<string>>(new Set());
 
   // Bumped on every fresh (non-append) request so stale responses are dropped.
   const requestSeq = useRef(0);
@@ -64,12 +83,18 @@ export default function UsersPage() {
 
   const statusParam = tab === "all" ? undefined : tab;
   const typeParam = typeFilter === "all" ? undefined : typeFilter;
+  const founderParam = founderFilter === "all" ? undefined : founderFilter;
   const searchParam = debouncedSearch.trim() || undefined;
 
   const load = useCallback(async () => {
     const seq = ++requestSeq.current;
     try {
-      const page = await listUsers({ status: statusParam, type: typeParam, search: searchParam });
+      const page = await listUsers({
+        status: statusParam,
+        type: typeParam,
+        search: searchParam,
+        foundersBadge: founderParam,
+      });
       if (requestSeq.current !== seq) return;
       setItems(page.items);
       setMeta(page.meta);
@@ -80,13 +105,13 @@ export default function UsersPage() {
       setMeta(null);
       setError(err instanceof ApiError ? err.message : "Could not load users.");
     }
-  }, [statusParam, typeParam, searchParam]);
+  }, [statusParam, typeParam, searchParam, founderParam]);
 
   // Changing the status tab or the (debounced) search starts the list over
   // from page one. Clearing during render (adjust-state-during-render, as
   // DataTable does) shows the skeleton on the very next paint; the effect
   // below only reloads.
-  const filterKey = `${statusParam ?? ""}|${typeParam ?? ""}|${searchParam ?? ""}`;
+  const filterKey = `${statusParam ?? ""}|${typeParam ?? ""}|${searchParam ?? ""}|${founderParam ?? ""}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (prevFilterKey !== filterKey) {
     setPrevFilterKey(filterKey);
@@ -113,6 +138,7 @@ export default function UsersPage() {
         status: statusParam,
         type: typeParam,
         search: searchParam,
+        foundersBadge: founderParam,
         cursor: meta.nextCursor,
       });
       if (requestSeq.current !== seq) return;
@@ -126,6 +152,45 @@ export default function UsersPage() {
       });
     } finally {
       setLoadingMore(false);
+    }
+  }
+
+  // Grant/revoke straight from the row (the old console's Founder checkbox). Optimistic: the
+  // box flips at once and is put back if the backend refuses; the row is then replaced with
+  // the server's copy so `foundersBadgeGrantedAt` is right too. Rows are matched by `rowKey`,
+  // not bare id — under dual-run the same id can exist on both backends.
+  async function toggleFounder(user: AdminUser, next: boolean) {
+    const key = rowKey(user);
+    if (pendingFounder.has(key)) return;
+    setPendingFounder((prev) => new Set(prev).add(key));
+    setItems((prev) =>
+      prev?.map((u) => (rowKey(u) === key ? { ...u, foundersBadge: next } : u)) ?? prev
+    );
+    try {
+      const updated = await setFoundersBadge(user.id, next, user._backend);
+      setItems((prev) =>
+        prev?.map((u) => (rowKey(u) === key ? { ...updated, _backend: u._backend } : u)) ?? prev
+      );
+      toast({
+        title: next ? "Founder badge granted" : "Founder badge removed",
+        description: user.email,
+        tone: "success",
+      });
+    } catch (err) {
+      setItems((prev) =>
+        prev?.map((u) => (rowKey(u) === key ? { ...u, foundersBadge: !next } : u)) ?? prev
+      );
+      toast({
+        title: "Founder badge update failed",
+        description: err instanceof ApiError ? err.message : user.email,
+        tone: "error",
+      });
+    } finally {
+      setPendingFounder((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(key);
+        return nextSet;
+      });
     }
   }
 
@@ -157,6 +222,30 @@ export default function UsersPage() {
           {statusLabel(u.accountStatus)}
         </Badge>
       ),
+    },
+    {
+      key: "foundersBadge",
+      header: "Founder",
+      width: "w-24",
+      sortValue: (u) => (u.foundersBadge ? 1 : 0),
+      // Sellers get the checkbox; buyers a dash — only sellers can hold the badge. A badge left
+      // on a demoted account stays visible so it can still be revoked.
+      render: (u) =>
+        isSeller(u) || u.foundersBadge ? (
+          <input
+            type="checkbox"
+            aria-label={`Founder badge for ${u.email}`}
+            title="Founder badge — shows on top of the seller's New/Active Seller badges"
+            className="size-4 cursor-pointer rounded accent-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
+            checked={u.foundersBadge}
+            disabled={!canModerate || pendingFounder.has(rowKey(u)) || (!isSeller(u) && !u.foundersBadge)}
+            // Keep the row's click (open the drawer) from firing when the box is toggled.
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => void toggleFounder(u, e.target.checked)}
+          />
+        ) : (
+          <span className="text-ink-muted">—</span>
+        ),
     },
     {
       key: "restrictedAt",
@@ -230,6 +319,16 @@ export default function UsersPage() {
           ]}
           className="w-full sm:w-44"
         />
+        <Select
+          value={founderFilter}
+          onChange={(v) => setFounderFilter(v as FounderFilter)}
+          options={[
+            { value: "all", label: "Founder: any" },
+            { value: "true", label: "Founder Sellers" },
+            { value: "false", label: "Not founders" },
+          ]}
+          className="w-full sm:w-44"
+        />
       </div>
 
       {items === null ? (
@@ -244,7 +343,7 @@ export default function UsersPage() {
           <EmptyState
             icon={Users}
             title="No users found"
-            description="No accounts match the current search, type, and status filters. Try different terms or another tab."
+            description="No accounts match the current search, type, Founder, and status filters. Try different terms or another tab."
           />
         </Card>
       ) : (
@@ -252,7 +351,7 @@ export default function UsersPage() {
           <DataTable
             rows={items}
             columns={columns}
-            rowKey={(u) => `${u._backend ?? "primary"}:${u.id}`}
+            rowKey={rowKey}
             onRowClick={(u) => setOpen({ id: u.id, backend: u._backend })}
             pageSize={200}
             emptyTitle="No users to show"

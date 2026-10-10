@@ -2,6 +2,7 @@ import { ApiError, envelopeFetch, type RequestOptions } from "@/lib/api/client";
 import { refreshAccessToken } from "@/lib/api/auth";
 import { useAuthStore } from "@/stores/authStore";
 import type {
+  AdminContentReport,
   AdminDispute,
   AdminDisputeDetail,
   AdminOrder,
@@ -35,6 +36,7 @@ import type {
   Page,
   PageMeta,
   RefundEligibility,
+  ReportDecision,
   SellerApplication,
   SellerApplicationDetail,
   SellerApplicationNote,
@@ -154,6 +156,8 @@ export async function listUsers(params: {
   status?: string;
   type?: string;
   search?: string;
+  /** `"true"` → Founder Sellers only, `"false"` → accounts without the badge. */
+  foundersBadge?: string;
   cursor?: string;
   perPage?: string;
 }): Promise<Page<AdminUser>> {
@@ -194,6 +198,22 @@ export function unrestrictUser(id: string, reason?: string, backend?: BackendId)
 
 export function banUser(id: string, reason: string, backend?: BackendId): Promise<AdminUser> {
   return adminFetch<AdminUser>(`/users/${id}/ban`, { method: "POST", body: { reason } }, backend);
+}
+
+/**
+ * Grant (`true`) or revoke (`false`) the "Founder Seller" badge. Seller accounts only — the backend
+ * answers 409 for a customer. Idempotent: re-sending the current value changes nothing.
+ */
+export function setFoundersBadge(
+  id: string,
+  foundersBadge: boolean,
+  backend?: BackendId
+): Promise<AdminUser> {
+  return adminFetch<AdminUser>(
+    `/users/${id}/founders-badge`,
+    { method: "POST", body: { foundersBadge } },
+    backend
+  );
 }
 
 // ── Seller applications (Requests) ────────────────────────────────────────
@@ -415,6 +435,29 @@ export function approveReplacement(orderId: string, reason?: string): Promise<un
 /** Clears a chargeback payout freeze and re-arms the parked payout timers. Idempotent, no body. */
 export function unblockPayout(orderId: string): Promise<unknown> {
   return adminFetch<unknown>(`/orders/${orderId}/unblock-payout`, { method: "POST", body: {} });
+}
+
+// ── Content reports (moderation) ──────────────────────────────────────────
+
+/** Newest first. `isDmca` filters to (or away from) DMCA takedown notices. */
+export function listReports(params: {
+  status?: string;
+  isDmca?: "true" | "false";
+  cursor?: string;
+  perPage?: string;
+}): Promise<Page<AdminContentReport>> {
+  return adminFetchPage<AdminContentReport>("/reports", params);
+}
+
+/**
+ * Records the decision (and the note, in the audit log). Bookkeeping only: it does not remove the
+ * listing or restrict anyone. The response carries no fresh `evidenceUrl`, so reload the list after.
+ */
+export function resolveReport(
+  id: string,
+  input: { status: ReportDecision; note?: string }
+): Promise<Omit<AdminContentReport, "evidenceUrl">> {
+  return adminFetch(`/reports/${id}/resolve`, { method: "POST", body: input });
 }
 
 // ── Analytics ─────────────────────────────────────────────────────────────
