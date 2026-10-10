@@ -2,6 +2,7 @@ import { ApiError, envelopeFetch, type RequestOptions } from "@/lib/api/client";
 import { refreshAccessToken } from "@/lib/api/auth";
 import { useAuthStore } from "@/stores/authStore";
 import type {
+  AdminContentReport,
   AdminDispute,
   AdminDisputeDetail,
   AdminOrder,
@@ -35,6 +36,7 @@ import type {
   Page,
   PageMeta,
   RefundEligibility,
+  ReportDecision,
   SellerApplication,
   SellerApplicationDetail,
   SellerApplicationNote,
@@ -433,6 +435,29 @@ export function approveReplacement(orderId: string, reason?: string): Promise<un
 /** Clears a chargeback payout freeze and re-arms the parked payout timers. Idempotent, no body. */
 export function unblockPayout(orderId: string): Promise<unknown> {
   return adminFetch<unknown>(`/orders/${orderId}/unblock-payout`, { method: "POST", body: {} });
+}
+
+// ── Content reports (moderation) ──────────────────────────────────────────
+
+/** Newest first. `isDmca` filters to (or away from) DMCA takedown notices. */
+export function listReports(params: {
+  status?: string;
+  isDmca?: "true" | "false";
+  cursor?: string;
+  perPage?: string;
+}): Promise<Page<AdminContentReport>> {
+  return adminFetchPage<AdminContentReport>("/reports", params);
+}
+
+/**
+ * Records the decision (and the note, in the audit log). Bookkeeping only: it does not remove the
+ * listing or restrict anyone. The response carries no fresh `evidenceUrl`, so reload the list after.
+ */
+export function resolveReport(
+  id: string,
+  input: { status: ReportDecision; note?: string }
+): Promise<Omit<AdminContentReport, "evidenceUrl">> {
+  return adminFetch(`/reports/${id}/resolve`, { method: "POST", body: input });
 }
 
 // ── Analytics ─────────────────────────────────────────────────────────────
