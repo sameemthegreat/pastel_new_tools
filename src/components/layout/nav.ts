@@ -1,6 +1,7 @@
 import {
   BarChart3,
   DatabaseZap,
+  Flag,
   Inbox,
   LayoutDashboard,
   Link2,
@@ -73,6 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Orders", href: "/orders", icon: Package, capability: "orders.read" },
       { label: "Disputes", href: "/disputes", icon: Scale, capability: "disputes.read" },
+      { label: "Reports", href: "/reports", icon: Flag, capability: "moderation.read" },
       { label: "Sales Tax", href: "/sales-tax", icon: Receipt, capability: "salesTax.read" },
       {
         label: "Email Templates",
