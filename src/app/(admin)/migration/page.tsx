@@ -1,66 +1,33 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import {
-  AlertTriangle,
-  Archive,
-  Database,
-  DatabaseZap,
-  History,
-  ListChecks,
-  RefreshCw,
-  ScrollText,
-} from "lucide-react";
+import { AlertTriangle, Database, DatabaseZap, History, RefreshCw, ScrollText } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Select } from "@/components/ui/Select";
 import { Skeleton } from "@/components/ui/Skeleton";
-import {
-  getMigrationMapStats,
-  getReconcile,
-  listBackups,
-  listRuns,
-  listStages,
-  triggerRun,
-} from "@/lib/api/migration";
+import { getMigrationMapStats, listRuns, listStages, triggerRun } from "@/lib/api/migration";
 import { ApiError } from "@/lib/api/client";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { useMigrationTargetStore } from "@/stores/migrationTargetStore";
 import { toast } from "@/stores/uiStore";
 import {
-  isMigrationTarget,
   MIGRATION_TARGET_META,
-  MIGRATION_TARGETS,
-  type BackupFile,
   type MigrationMapStat,
   type MigrationRun,
   type MigrationRunStatus,
-  type MigrationStage,
-  type ReconcileRow,
   type TriggerRunInput,
   type MigrationTarget,
 } from "@/types/migration";
 import { BackendSwitchCard } from "./BackendSwitchCard";
+import { FullMigrationCard } from "./FullMigrationCard";
 import { LogViewer } from "./LogViewer";
-import { RunCard } from "./RunCard";
 
 const TERMINAL: MigrationRunStatus[] = ["succeeded", "failed", "interrupted"];
-
-function formatBytes(n: number): string {
-  const units = ["B", "KB", "MB", "GB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(0)}${units[i]}`;
-}
 
 export default function MigrationPage() {
   const canRead = useAuthStore((s) => s.can("migration.read"));
@@ -69,18 +36,17 @@ export default function MigrationPage() {
   const setTarget = useMigrationTargetStore((s) => s.setTarget);
   const targetMeta = MIGRATION_TARGET_META[target];
 
-  const [stages, setStages] = useState<MigrationStage[] | null>(null);
+  const [stagesLoaded, setStagesLoaded] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [runs, setRuns] = useState<MigrationRun[] | null>(null);
-  const [reconcile, setReconcile] = useState<ReconcileRow[] | null>(null);
   const [mapStats, setMapStats] = useState<MigrationMapStat[] | null>(null);
-  const [backups, setBackups] = useState<BackupFile[] | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadStages = useCallback(async () => {
-    const { stages: s, activeRunId: active } = await listStages();
-    setStages(s);
+    // Only the active-run slot matters here; the single-step stages are not exposed in this UI.
+    const { activeRunId: active } = await listStages();
+    setStagesLoaded(true);
     setActiveRunId(active);
     // Surface an already-running migration (started elsewhere) without stealing a
     // selection the operator made by clicking a history row.
@@ -88,18 +54,16 @@ export default function MigrationPage() {
   }, []);
 
   const loadRuns = useCallback(async () => setRuns(await listRuns({ limit: 25 })), []);
-  const loadReconcile = useCallback(async () => setReconcile(await getReconcile()), []);
   const loadMapStats = useCallback(async () => setMapStats(await getMigrationMapStats()), []);
-  const loadBackups = useCallback(async () => setBackups(await listBackups()), []);
 
   const loadAll = useCallback(async () => {
     try {
-      await Promise.all([loadStages(), loadRuns(), loadReconcile(), loadMapStats(), loadBackups()]);
+      await Promise.all([loadStages(), loadRuns(), loadMapStats()]);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not reach the migration service.");
     }
-  }, [loadStages, loadRuns, loadReconcile, loadMapStats, loadBackups]);
+  }, [loadStages, loadRuns, loadMapStats]);
 
   // Re-fetch whenever the TARGET environment changes (the API client reads the selection from
   // the store, so the same loaders now hit the other control plane).
@@ -112,12 +76,10 @@ export default function MigrationPage() {
   // linger (a run id from dev means nothing to staging), then let the effect above refill them.
   function switchTarget(next: MigrationTarget) {
     if (next === target) return;
-    setStages(null);
+    setStagesLoaded(false);
     setActiveRunId(null);
     setRuns(null);
-    setReconcile(null);
     setMapStats(null);
-    setBackups(null);
     setSelectedRunId(null);
     setError(null);
     setTarget(next);
@@ -128,7 +90,11 @@ export default function MigrationPage() {
       const run = await triggerRun(input);
       setSelectedRunId(run.id);
       setActiveRunId(run.id);
-      toast({ title: "Migration started", description: `Stage: ${run.stage}`, tone: "success" });
+      toast({
+        title: "Migration started",
+        description: `Target: ${MIGRATION_TARGET_META[target].label}`,
+        tone: "success",
+      });
       void loadRuns();
     } catch (err) {
       toast({
@@ -145,12 +111,10 @@ export default function MigrationPage() {
         // A run just finished — clear the slot and refresh the world.
         void loadStages();
         void loadRuns();
-        void loadReconcile();
         void loadMapStats();
-        void loadBackups();
       }
     },
-    [loadStages, loadRuns, loadReconcile, loadMapStats, loadBackups]
+    [loadStages, loadRuns, loadMapStats]
   );
 
   if (!canRead) {
@@ -218,24 +182,11 @@ export default function MigrationPage() {
     <>
       <PageHeader
         title="Migration"
-        description="Drive and watch the Sharetribe + Firebase → Postgres migration. Every stage is idempotent; one run at a time."
+        description="Run the full Sharetribe + Firebase → Postgres migration into Preview prod or Preview staging. One run at a time per target."
         actions={
-          <div className="flex items-center gap-2">
-            <Select
-              className="w-64"
-              value={target}
-              onChange={(v) => {
-                if (isMigrationTarget(v)) switchTarget(v);
-              }}
-              options={MIGRATION_TARGETS.map((t) => ({
-                value: t,
-                label: `Target: ${MIGRATION_TARGET_META[t].label}`,
-              }))}
-            />
-            <Button variant="outline" icon={RefreshCw} onClick={() => void loadAll()}>
-              Refresh
-            </Button>
-          </div>
+          <Button variant="outline" icon={RefreshCw} onClick={() => void loadAll()}>
+            Refresh
+          </Button>
         }
       />
 
@@ -254,12 +205,11 @@ export default function MigrationPage() {
         <p className="flex items-start gap-2 text-sm text-ink-secondary">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning-600" aria-hidden />
           <span>
-            Target: <strong>{targetMeta.label}</strong> — this writes directly to {targetMeta.dbLabel}.
-            Re-runs are safe
-            (idempotent via <span className="font-mono">migration_map</span>), but the{" "}
-            <strong>Reset</strong> stage truncates every migration-owned table. Use{" "}
-            <strong>Dry run</strong> to rehearse a stage without committing.
-            {activeRunId && " A run is currently in progress — stages are locked until it finishes."}
+            Target: <strong>{targetMeta.label}</strong> — a full migration empties and rewrites{" "}
+            {targetMeta.dbLabel}. Record ids stay stable across re-runs (via{" "}
+            <span className="font-mono">migration_map</span>). Use <strong>Dry run</strong> to rehearse
+            without committing.
+            {activeRunId && " A run is currently in progress — the migration is locked until it finishes."}
           </span>
         </p>
       </Card>
@@ -274,99 +224,38 @@ export default function MigrationPage() {
         </Card>
       )}
 
-      {/* Stage run cards */}
-      {stages === null ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <Card key={i} className="space-y-3 p-5">
-              <Skeleton className="h-5 w-1/3" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-9 w-full" />
-            </Card>
-          ))}
-        </div>
+      {/* The one-click full migration — the only runnable action on this page */}
+      {!stagesLoaded ? (
+        <Card className="mb-5 space-y-3 p-5">
+          <Skeleton className="h-5 w-1/3" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+        </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {stages.map((stage) => (
-            <RunCard
-              key={stage.key}
-              stage={stage}
-              disabled={!!activeRunId}
-              canRun={canRun}
-              onRun={handleRun}
-              backups={backups ?? []}
-            />
-          ))}
-        </div>
+        <FullMigrationCard
+          key={target}
+          target={target}
+          onTargetChange={switchTarget}
+          disabled={!!activeRunId}
+          canRun={canRun}
+          onRun={handleRun}
+        />
       )}
 
-      {/* Reconcile + migration_map stats */}
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader title="Reconcile" description="Row-count and dangling-FK sanity checks." />
-          <CardBody>
-            {reconcile === null ? (
-              <Skeleton className="h-24 w-full" />
-            ) : reconcile.length === 0 ? (
-              <EmptyState icon={ListChecks} title="No data" description="Run a stage first, then reconcile." />
-            ) : (
-              <ul className="divide-y divide-hairline">
-                {reconcile.map((row) => (
-                  <li key={row.label} className="flex items-center justify-between py-2 text-sm">
-                    <span className="text-ink-secondary">{row.label}</span>
-                    <span className="font-mono font-semibold text-ink">{row.count ?? "—"}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader title="Migration map" description="Source records mapped to target ids, by type." />
-          <CardBody>
-            {mapStats === null ? (
-              <Skeleton className="h-24 w-full" />
-            ) : mapStats.length === 0 ? (
-              <EmptyState icon={Database} title="Empty" description="Nothing has been migrated yet." />
-            ) : (
-              <ul className="divide-y divide-hairline">
-                {mapStats.map((row) => (
-                  <li key={row.source_type} className="flex items-center justify-between py-2 text-sm">
-                    <span className="font-mono text-ink-secondary">{row.source_type}</span>
-                    <span className="font-mono font-semibold text-ink">{row.count}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardBody>
-        </Card>
-      </div>
-
-      {/* Backups */}
-      <Card className="mt-5">
-        <CardHeader
-          title="Backups"
-          description="pg_dump snapshots on the local volume (also copied to Spaces). Restore one from the Restore card above."
-        />
+      {/* migration_map stats */}
+      <Card className="mb-5">
+        <CardHeader title="Migration map" description="Source records mapped to target ids, by type." />
         <CardBody>
-          {backups === null ? (
+          {mapStats === null ? (
             <Skeleton className="h-24 w-full" />
-          ) : backups.length === 0 ? (
-            <EmptyState
-              icon={Archive}
-              title="No backups yet"
-              description="Run the Backup database stage to create a timestamped snapshot."
-            />
+          ) : mapStats.length === 0 ? (
+            <EmptyState icon={Database} title="Empty" description="Nothing has been migrated yet." />
           ) : (
             <ul className="divide-y divide-hairline">
-              {backups.map((b) => (
-                <li key={b.name} className="flex items-center justify-between gap-4 py-2 text-sm">
-                  <span className="truncate font-mono text-ink">{b.name}</span>
-                  <span className="flex shrink-0 items-center gap-3 text-ink-muted">
-                    <span>{formatBytes(b.sizeBytes)}</span>
-                    <span>{formatDateTime(b.modifiedAt)}</span>
-                  </span>
+              {mapStats.map((row) => (
+                <li key={row.source_type} className="flex items-center justify-between py-2 text-sm">
+                  <span className="font-mono text-ink-secondary">{row.source_type}</span>
+                  <span className="font-mono font-semibold text-ink">{row.count}</span>
                 </li>
               ))}
             </ul>
@@ -375,7 +264,7 @@ export default function MigrationPage() {
       </Card>
 
       {/* Run history */}
-      <Card className="mt-5 p-0">
+      <Card className="p-0">
         <CardHeader title="Run history" description="The most recent migration runs and their outcomes." />
         {runs === null ? (
           <CardBody>
@@ -383,7 +272,7 @@ export default function MigrationPage() {
           </CardBody>
         ) : runs.length === 0 ? (
           <CardBody>
-            <EmptyState icon={History} title="No runs yet" description="Trigger a stage above to see it here." />
+            <EmptyState icon={History} title="No runs yet" description="Run a full migration above to see it here." />
           </CardBody>
         ) : (
           <CardBody className="pt-0">

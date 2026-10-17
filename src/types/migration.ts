@@ -65,8 +65,13 @@ export type MigrationMapStat = { source_type: string; count: number };
 
 export type BackupFile = { name: string; sizeBytes: number; modifiedAt: string };
 
-/** Which source `extract` pulls from. */
+/** Which Sharetribe (+ its Firestore) the migration pulls from. */
 export type MigrationSource = "live" | "dev";
+
+export const MIGRATION_SOURCE_META: Record<MigrationSource, { label: string; description: string }> = {
+  live: { label: "Sharetribe live", description: "Production marketplace data (real users, listings, orders)." },
+  dev: { label: "Sharetribe dev", description: "The Sharetribe dev/test marketplace." },
+};
 
 /** Body for POST /runs. */
 export type TriggerRunInput = {
@@ -105,11 +110,11 @@ export function isMigrationTarget(value: unknown): value is MigrationTarget {
 
 export const MIGRATION_TARGET_META: Record<MigrationTarget, { label: string; dbLabel: string }> = {
   primary: {
-    label: "Dev backend (this console)",
-    dbLabel: "the dev backend's database (api-v1-new — the catalog the live apps use through the wrapper)",
+    label: "Preview prod",
+    dbLabel: "the preview-prod (dev) backend's database (api-v1-new)",
   },
   staging: {
-    label: "Staging backend",
-    dbLabel: "the staging backend's database (api-staging-new)",
+    label: "Preview staging",
+    dbLabel: "the preview-staging backend's database (api-staging-new)",
   },
 };
